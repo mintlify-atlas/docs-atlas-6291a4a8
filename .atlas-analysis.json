@@ -1,0 +1,166 @@
+{
+  "projectType": "framework",
+  "projectName": "Microsoft Agent Framework",
+  "projectDescription": "A comprehensive multi-language framework for building, orchestrating, and deploying AI agents with support for Python and .NET.",
+  "theme": "palm",
+  "primaryColor": "#0078D4",
+  "lightColor": "#50E6FF",
+  "darkColor": "#005A9E",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/agents",
+              "concepts/tools",
+              "concepts/middleware",
+              "concepts/sessions",
+              "concepts/observability"
+            ]
+          },
+          {
+            "group": "Workflows",
+            "pages": [
+              "workflows/introduction",
+              "workflows/building-workflows",
+              "workflows/orchestration",
+              "workflows/checkpoints",
+              "workflows/human-in-the-loop"
+            ]
+          },
+          {
+            "group": "Providers",
+            "pages": [
+              "providers/overview",
+              "providers/azure-openai",
+              "providers/openai",
+              "providers/anthropic",
+              "providers/other-providers"
+            ]
+          },
+          {
+            "group": "Hosting & Deployment",
+            "pages": [
+              "hosting/overview",
+              "hosting/azure-functions",
+              "hosting/a2a-protocol",
+              "hosting/durable-tasks"
+            ]
+          },
+          {
+            "group": "Migration Guides",
+            "pages": [
+              "migration/from-semantic-kernel",
+              "migration/from-autogen"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Python SDK",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "python/installation",
+              "python/quickstart",
+              "python/first-agent"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "python/agents",
+              "python/tools",
+              "python/workflows",
+              "python/middleware",
+              "python/providers"
+            ]
+          },
+          {
+            "group": "API Reference",
+            "pages": [
+              "python/api/agent",
+              "python/api/chat-client",
+              "python/api/tools",
+              "python/api/middleware",
+              "python/api/sessions",
+              "python/api/workflows"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": ".NET SDK",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "dotnet/installation",
+              "dotnet/quickstart",
+              "dotnet/first-agent"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "dotnet/agents",
+              "dotnet/tools",
+              "dotnet/workflows",
+              "dotnet/middleware",
+              "dotnet/providers"
+            ]
+          },
+          {
+            "group": "API Reference",
+            "pages": [
+              "dotnet/api/aiagent",
+              "dotnet/api/chat-client",
+              "dotnet/api/tools",
+              "dotnet/api/middleware",
+              "dotnet/api/sessions",
+              "dotnet/api/workflows"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Multi-language support for Python and .NET with consistent APIs",
+    "Graph-based workflow orchestration with streaming and checkpointing",
+    "Flexible middleware system for request/response processing",
+    "Support for multiple LLM providers (OpenAI, Azure, Anthropic, etc.)",
+    "Built-in OpenTelemetry integration for observability",
+    "Human-in-the-loop capabilities and tool approval workflows",
+    "Interactive DevUI for development and debugging",
+    "Agent-to-Agent (A2A) protocol for distributed systems"
+  ],
+  "publicApiSurface": [
+    "Agent / AIAgent - Core agent abstraction",
+    "ChatClient / IChatClient - Chat client interface",
+    "Tool / AITool - Function tool definitions",
+    "Middleware - AgentMiddleware, ChatMiddleware, FunctionMiddleware",
+    "AgentSession / AgentSession - Conversation state management",
+    "Workflow / WorkflowBuilder - Graph-based orchestration",
+    "WorkflowExecutor / Executor - Workflow execution units",
+    "ContextProvider / AIContextProvider - Memory and context injection",
+    "OpenAI providers - OpenAIChatClient, AzureOpenAIResponsesClient",
+    "Anthropic providers - AnthropicChatClient, ClaudeClient",
+    "Azure integrations - AzureAIChatClient, AzureAISearchProvider",
+    "MCP tools - MCPStdioTool, MCPWebsocketTool",
+    "Checkpoint storage - FileCheckpointStorage, InMemoryCheckpointStorage",
+    "Telemetry - OpenTelemetry integration for distributed tracing"
+  ]
+}
