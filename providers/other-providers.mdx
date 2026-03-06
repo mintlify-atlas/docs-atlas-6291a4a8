@@ -1,0 +1,617 @@
+---
+title: "Other Providers"
+description: "Use AWS Bedrock, Ollama, GitHub Copilot, and other LLM providers with Microsoft Agent Framework"
+---
+
+# Other LLM Providers
+
+Beyond Azure OpenAI, OpenAI, and Anthropic, Microsoft Agent Framework supports several additional providers including AWS Bedrock, Ollama for local models, GitHub Copilot, and more.
+
+## Supported Providers
+
+<CardGroup cols={2}>
+  <Card title="AWS Bedrock" icon="aws">
+    Access models via Amazon Bedrock
+  </Card>
+  <Card title="Ollama" icon="server">
+    Run models locally with Ollama
+  </Card>
+  <Card title="GitHub Copilot" icon="github">
+    Use GitHub Copilot models
+  </Card>
+  <Card title="Azure AI Foundry Local" icon="laptop">
+    Local model inference via Foundry
+  </Card>
+</CardGroup>
+
+## AWS Bedrock
+
+AWS Bedrock provides access to foundation models from multiple providers through a single API.
+
+### Installation
+
+<CodeGroup>
+
+```bash Python
+pip install agent-framework --pre
+pip install agent-framework-bedrock
+```
+
+```bash .NET
+dotnet add package Microsoft.Agents.AI
+dotnet add package AWS.SDK.BedrockRuntime
+```
+
+</CodeGroup>
+
+### Authentication
+
+Bedrock uses AWS credentials:
+
+<Tabs>
+  <Tab title="Environment Variables">
+    ```bash
+    AWS_ACCESS_KEY_ID=your-access-key
+    AWS_SECRET_ACCESS_KEY=your-secret-key
+    AWS_SESSION_TOKEN=your-session-token  # Optional
+    BEDROCK_REGION=us-east-1
+    BEDROCK_CHAT_MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0
+    ```
+  </Tab>
+  <Tab title="AWS Profiles">
+    ```bash
+    AWS_PROFILE=your-profile-name
+    BEDROCK_REGION=us-east-1
+    ```
+  </Tab>
+</Tabs>
+
+### Basic Usage
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from agent_framework import Agent
+from agent_framework.amazon import BedrockChatClient
+
+async def main():
+    # Create agent with Bedrock
+    agent = Agent(
+        client=BedrockChatClient(),
+        instructions="You are a helpful assistant.",
+        name="BedrockAgent",
+    )
+    
+    result = await agent.run("What is the capital of France?")
+    print(result.text)
+
+asyncio.run(main())
+```
+
+```csharp C#
+using Amazon.BedrockRuntime;
+using Microsoft.Agents.AI;
+
+var client = new AmazonBedrockRuntimeClient(
+    Amazon.RegionEndpoint.USEast1
+);
+
+var agent = client.AsAIAgent(
+    modelId: "anthropic.claude-3-sonnet-20240229-v1:0",
+    instructions: "You are a helpful assistant.",
+    name: "BedrockAgent"
+);
+
+var result = await agent.RunAsync("What is the capital of France?");
+Console.WriteLine(result);
+```
+
+</CodeGroup>
+
+### Available Models
+
+Bedrock provides access to models from multiple providers:
+
+| Provider | Model ID | Best For |
+|----------|----------|----------|
+| Anthropic | anthropic.claude-3-sonnet-20240229-v1:0 | General purpose |
+| Anthropic | anthropic.claude-3-haiku-20240307-v1:0 | Speed and cost |
+| Anthropic | anthropic.claude-3-opus-20240229-v1:0 | Maximum capability |
+| Meta | meta.llama3-70b-instruct-v1:0 | Open source, reasoning |
+| Amazon | amazon.titan-text-premier-v1:0 | AWS-native |
+| AI21 Labs | ai21.jamba-instruct-v1:0 | Long context |
+| Cohere | cohere.command-r-plus-v1:0 | Retrieval, summarization |
+| Mistral | mistral.mistral-large-2407-v1:0 | Multilingual |
+
+<Note>
+Model availability varies by AWS region. Check the [Bedrock documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for details.
+</Note>
+
+### Configuration
+
+<CodeGroup>
+
+```python Python
+from agent_framework.amazon import BedrockChatClient
+
+client = BedrockChatClient(
+    model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+    region="us-east-1",
+    max_tokens=4096,
+)
+```
+
+```csharp C#
+using Amazon.BedrockRuntime;
+
+var client = new AmazonBedrockRuntimeClient(
+    Amazon.RegionEndpoint.USEast1
+);
+```
+
+</CodeGroup>
+
+### Function Calling
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from typing import Annotated
+from agent_framework import Agent, tool
+from agent_framework.amazon import BedrockChatClient
+from pydantic import Field
+
+@tool(approval_mode="never_require")
+def get_weather(city: Annotated[str, Field(description="City name")]) -> dict:
+    """Get the weather for a city."""
+    return {"city": city, "forecast": "72F and sunny"}
+
+async def main():
+    agent = Agent(
+        client=BedrockChatClient(),
+        instructions="You are a weather assistant.",
+        name="WeatherAgent",
+        tools=[get_weather],
+    )
+    
+    result = await agent.run("What's the weather in Seattle?")
+    print(result.text)
+
+asyncio.run(main())
+```
+
+```csharp C#
+using Amazon.BedrockRuntime;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using System.ComponentModel;
+
+[Description("Get the weather for a city")]
+string GetWeather([Description("City name")] string city)
+{
+    return $"{{\"city\": \"{city}\", \"forecast\": \"72F and sunny\"}}";
+}
+
+var agent = client.AsAIAgent(
+    modelId: "anthropic.claude-3-sonnet-20240229-v1:0",
+    instructions: "You are a weather assistant.",
+    tools: [AIFunctionFactory.Create(GetWeather)]
+);
+```
+
+</CodeGroup>
+
+<Warning>
+Not all Bedrock models support function calling. Claude 3 models have excellent function calling support.
+</Warning>
+
+## Ollama
+
+Ollama enables running large language models locally on your machine.
+
+### Installation
+
+1. Install Ollama from [ollama.com](https://ollama.com)
+2. Pull a model: `ollama pull llama3.2`
+3. Install the framework package:
+
+<CodeGroup>
+
+```bash Python
+pip install agent-framework --pre
+pip install agent-framework-ollama
+```
+
+```bash .NET
+dotnet add package Microsoft.Agents.AI
+dotnet add package OllamaSharp
+```
+
+</CodeGroup>
+
+### Basic Usage
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from agent_framework.ollama import OllamaChatClient
+
+async def main():
+    # Ollama must be running locally (ollama serve)
+    client = OllamaChatClient()
+    agent = client.as_agent(
+        instructions="You are a helpful assistant.",
+    )
+    
+    result = await agent.run("What is the capital of France?")
+    print(result)
+
+asyncio.run(main())
+```
+
+```csharp C#
+using OllamaSharp;
+using Microsoft.Agents.AI;
+
+var endpoint = Environment.GetEnvironmentVariable("OLLAMA_ENDPOINT") ?? "http://localhost:11434";
+var modelName = Environment.GetEnvironmentVariable("OLLAMA_MODEL_NAME") ?? "llama3.2";
+
+var agent = new OllamaApiClient(new Uri(endpoint), modelName)
+    .AsAIAgent(instructions: "You are a helpful assistant.", name: "Assistant");
+
+var result = await agent.RunAsync("What is the capital of France?");
+Console.WriteLine(result);
+```
+
+</CodeGroup>
+
+### Configuration
+
+<Tabs>
+  <Tab title="Environment Variables">
+    ```bash
+    OLLAMA_ENDPOINT=http://localhost:11434
+    OLLAMA_MODEL_ID=llama3.2
+    ```
+  </Tab>
+  <Tab title="Explicit Configuration">
+    <CodeGroup>
+    ```python Python
+    from agent_framework.ollama import OllamaChatClient
+    
+    client = OllamaChatClient(
+        endpoint="http://localhost:11434",
+        model_id="llama3.2",
+    )
+    ```
+    ```csharp C#
+    var client = new OllamaApiClient(
+        new Uri("http://localhost:11434"),
+        "llama3.2"
+    );
+    ```
+    </CodeGroup>
+  </Tab>
+</Tabs>
+
+### Available Models
+
+Popular models available via Ollama:
+
+| Model | Size | Best For | Function Calling |
+|-------|------|----------|------------------|
+| llama3.2 | 3B | Fast, general purpose | ✅ Limited |
+| llama3.1 | 8B/70B | Reasoning, coding | ✅ Limited |
+| mistral | 7B | Instruction following | ⚠️ Limited |
+| codellama | 7B/13B/34B | Code generation | ❌ |
+| phi3 | 3.8B | Small, efficient | ⚠️ Limited |
+| gemma2 | 9B/27B | Google's model | ⚠️ Limited |
+| qwen2.5 | 0.5B-72B | Multilingual | ✅ Good |
+| deepseek-coder | 6.7B/33B | Code understanding | ❌ |
+
+<Note>
+Install models with `ollama pull <model-name>`. Not all models support function calling - check model capabilities before using tools.
+</Note>
+
+### Multimodal Models
+
+Some Ollama models support vision:
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from agent_framework import Message
+from agent_framework.ollama import OllamaChatClient
+
+async def main():
+    # Use a multimodal model like llava
+    client = OllamaChatClient(model_id="llava")
+    agent = client.as_agent(
+        instructions="You analyze images.",
+    )
+    
+    message = Message(
+        role="user",
+        text="What's in this image?",
+        images=["path/to/image.jpg"],
+    )
+    
+    result = await agent.run(message)
+    print(result)
+
+asyncio.run(main())
+```
+
+```csharp C#
+// Vision support in .NET coming soon
+```
+
+</CodeGroup>
+
+<Tip>
+Multimodal models like `llava` and `llava-phi3` support image inputs. Pull them with `ollama pull llava`.
+</Tip>
+
+## GitHub Copilot
+
+Use GitHub Copilot models through the Copilot CLI.
+
+### Installation
+
+1. Install GitHub Copilot CLI
+2. Install the framework package:
+
+<CodeGroup>
+
+```bash Python
+pip install agent-framework --pre
+pip install agent-framework-github-copilot
+```
+
+```bash .NET
+# .NET support coming soon
+```
+
+</CodeGroup>
+
+### Basic Usage
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from agent_framework.github import GitHubCopilotAgent
+
+async def main():
+    agent = GitHubCopilotAgent(
+        instructions="You are a helpful assistant.",
+    )
+    
+    async with agent:
+        result = await agent.run("What is the capital of France?")
+        print(result)
+
+asyncio.run(main())
+```
+
+```csharp C#
+// .NET support coming soon
+```
+
+</CodeGroup>
+
+### Configuration
+
+<Tabs>
+  <Tab title="Environment Variables">
+    ```bash
+    GITHUB_COPILOT_CLI_PATH=/path/to/copilot-cli
+    GITHUB_COPILOT_MODEL=gpt-5
+    GITHUB_COPILOT_TIMEOUT=30
+    GITHUB_COPILOT_LOG_LEVEL=info
+    ```
+  </Tab>
+  <Tab title="Explicit Configuration">
+    ```python Python
+    from agent_framework.github import GitHubCopilotAgent
+    
+    agent = GitHubCopilotAgent(
+        instructions="You are a helpful assistant.",
+        model="claude-sonnet-4",
+        timeout=30,
+    )
+    ```
+  </Tab>
+</Tabs>
+
+### Available Models
+
+GitHub Copilot provides access to multiple models:
+
+- `gpt-5` - Latest GPT model
+- `claude-sonnet-4` - Anthropic Claude
+- `o1-preview` - OpenAI reasoning model
+- `o3-mini` - Compact reasoning model
+
+<Note>
+Model availability depends on your GitHub Copilot subscription and organization settings.
+</Note>
+
+## Azure AI Foundry Local
+
+Run models locally via Azure AI Foundry for development and testing.
+
+### Installation
+
+<CodeGroup>
+
+```bash Python
+pip install agent-framework --pre
+pip install agent-framework-foundry-local
+```
+
+```bash .NET
+# .NET support coming soon
+```
+
+</CodeGroup>
+
+### Basic Usage
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from agent_framework.foundry_local import FoundryLocalAgent
+
+async def main():
+    agent = FoundryLocalAgent(
+        instructions="You are a helpful assistant.",
+    )
+    
+    result = await agent.run("What is the capital of France?")
+    print(result)
+
+asyncio.run(main())
+```
+
+```csharp C#
+// .NET support coming soon
+```
+
+</CodeGroup>
+
+## Choosing a Provider
+
+Here's guidance on when to use each provider:
+
+<AccordionGroup>
+  <Accordion title="Use AWS Bedrock when...">
+    - You're already using AWS infrastructure
+    - You need access to multiple model providers
+    - You want managed scaling and availability
+    - You require AWS compliance features
+    - You need region-specific deployments
+  </Accordion>
+  
+  <Accordion title="Use Ollama when...">
+    - You want to run models locally
+    - You need offline operation
+    - You're concerned about data privacy
+    - You want to avoid API costs
+    - You're doing local development
+    - You need fast iteration without rate limits
+  </Accordion>
+  
+  <Accordion title="Use GitHub Copilot when...">
+    - You have a GitHub Copilot subscription
+    - You want access to multiple models through one API
+    - You're building developer tools
+    - You want model selection flexibility
+  </Accordion>
+  
+  <Accordion title="Use Foundry Local when...">
+    - You're developing Azure AI Foundry applications
+    - You need local testing before cloud deployment
+    - You want to prototype without cloud costs
+    - You're working offline or in restricted environments
+  </Accordion>
+</AccordionGroup>
+
+## Provider Comparison
+
+| Feature | Bedrock | Ollama | GitHub Copilot | Foundry Local |
+|---------|---------|--------|----------------|---------------|
+| Cost | $$ | Free (local) | $ (subscription) | Free (local) |
+| Internet Required | ✅ | ❌ | ✅ | ❌ |
+| Setup Complexity | Medium | Low | Low | Medium |
+| Model Selection | Multiple providers | Large catalog | Multiple | Limited |
+| Function Calling | ✅ Model dependent | ⚠️ Limited | ✅ | ⚠️ Limited |
+| Streaming | ✅ | ✅ | ✅ | ✅ |
+| Production Ready | ✅ | ⚠️ Depends | ✅ | ❌ Dev only |
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="AWS Bedrock">
+    1. Use IAM roles for authentication in production
+    2. Enable CloudWatch logging for debugging
+    3. Choose region based on data residency requirements
+    4. Monitor costs - different models have different pricing
+    5. Test model availability in your target region
+  </Accordion>
+  
+  <Accordion title="Ollama">
+    1. Ensure sufficient RAM for your chosen model
+    2. Use GPU acceleration when available
+    3. Keep Ollama updated for latest models
+    4. Test model capabilities before production use
+    5. Not all models support function calling
+    6. Consider model size vs. quality tradeoffs
+  </Accordion>
+  
+  <Accordion title="GitHub Copilot">
+    1. Verify your organization allows Copilot use
+    2. Check model availability for your subscription
+    3. Monitor token usage
+    4. Implement retry logic for rate limits
+    5. Test fallback to other providers
+  </Accordion>
+  
+  <Accordion title="Foundry Local">
+    1. Only use for development and testing
+    2. Transition to cloud for production
+    3. Test with same models as production
+    4. Monitor resource usage
+    5. Keep dependencies updated
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Bedrock Connection Issues">
+    1. Verify AWS credentials are configured correctly
+    2. Check IAM permissions for Bedrock access
+    3. Ensure the model is available in your region
+    4. Verify network connectivity to AWS
+    5. Check CloudWatch logs for detailed errors
+  </Accordion>
+  
+  <Accordion title="Ollama Not Responding">
+    1. Verify Ollama is running: `ollama serve`
+    2. Check if the model is pulled: `ollama list`
+    3. Verify endpoint URL (default: http://localhost:11434)
+    4. Check system resources (RAM, GPU)
+    5. Review Ollama logs for errors
+  </Accordion>
+  
+  <Accordion title="GitHub Copilot Errors">
+    1. Verify Copilot CLI is installed
+    2. Check authentication: `gh auth status`
+    3. Verify subscription is active
+    4. Check model availability
+    5. Review CLI logs for details
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Provider Comparison" icon="scale-balanced" href="/providers/overview">
+    Compare all available providers
+  </Card>
+  <Card title="Function Tools" icon="wrench" href="/concepts/tools">
+    Add function calling capabilities
+  </Card>
+  <Card title="Workflows" icon="diagram-project" href="/workflows/introduction">
+    Build multi-agent workflows
+  </Card>
+  <Card title="Hosting & Deployment" icon="rocket" href="/hosting/overview">
+    Deploy agents to production
+  </Card>
+</CardGroup>

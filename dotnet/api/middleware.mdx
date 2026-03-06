@@ -1,0 +1,541 @@
+---
+title: Middleware
+description: API reference for middleware and chat client pipeline in Microsoft Agent Framework .NET SDK
+---
+
+# Middleware API Reference
+
+Middleware components and patterns for building chat client pipelines.
+
+## Overview
+
+The .NET SDK uses the `ChatClientBuilder` pattern from `Microsoft.Extensions.AI` to create pipelines of middleware components that wrap an underlying `IChatClient`. This allows you to add cross-cutting concerns like logging, telemetry, caching, and function invocation.
+
+```csharp
+using Microsoft.Extensions.AI;
+```
+
+## ChatClientBuilder
+
+Builder for creating pipelines of `IChatClient` middleware.
+
+### Use()
+
+Adds a middleware component to the pipeline.
+
+```csharp
+public ChatClientBuilder Use(
+    Func<IChatClient, IServiceProvider?, IChatClient> factory
+)
+
+public ChatClientBuilder Use(
+    IChatClient innerClient
+)
+```
+
+<ParamField path="factory" type="Func<IChatClient, IServiceProvider?, IChatClient>" required>
+  A factory function that takes the inner client and optional service provider, and returns a new chat client that wraps it.
+</ParamField>
+
+<ParamField path="innerClient" type="IChatClient" required>
+  A chat client instance to add to the pipeline.
+</ParamField>
+
+<ResponseField name="return" type="ChatClientBuilder">
+  The builder instance for method chaining.
+</ResponseField>
+
+### Build()
+
+Builds the final `IChatClient` pipeline.
+
+```csharp
+public IChatClient Build(IServiceProvider? services = null)
+```
+
+<ParamField path="services" type="IServiceProvider?">
+  Optional service provider for dependency injection.
+</ParamField>
+
+<ResponseField name="return" type="IChatClient">
+  The constructed chat client pipeline.
+</ResponseField>
+
+### Example: Basic Pipeline
+
+```csharp
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
+
+var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+
+var pipeline = new ChatClientBuilder()
+    .Use(new OpenAIChatClient(
+        model: "gpt-4",
+        apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+    ))
+    .UseLogging(loggerFactory)
+    .Build();
+
+var agent = pipeline.AsAIAgent(
+    instructions: "You are a helpful assistant.",
+    name: "Assistant"
+);
+
+var response = await agent.RunAsync("Hello!");
+Console.WriteLine(response.Text);
+```
+
+---
+
+## Built-in Middleware
+
+### UseLogging()
+
+Adds logging middleware to the pipeline.
+
+```csharp
+public static ChatClientBuilder UseLogging(
+    this ChatClientBuilder builder,
+    ILoggerFactory? loggerFactory = null
+)
+```
+
+<ParamField path="loggerFactory" type="ILoggerFactory?">
+  Optional logger factory. If null, logs are not emitted.
+</ParamField>
+
+### UseOpenTelemetry()
+
+Adds OpenTelemetry instrumentation to the pipeline.
+
+```csharp
+public static ChatClientBuilder UseOpenTelemetry(
+    this ChatClientBuilder builder,
+    OpenTelemetryChatClientOptions? options = null
+)
+```
+
+<ParamField path="options" type="OpenTelemetryChatClientOptions?">
+  Optional configuration for OpenTelemetry instrumentation.
+</ParamField>
+
+### UseFunctionInvocation()
+
+Adds function invocation middleware to the pipeline.
+
+```csharp
+public static ChatClientBuilder UseFunctionInvocation(
+    this ChatClientBuilder builder,
+    IServiceProvider? services = null
+)
+```
+
+<ParamField path="services" type="IServiceProvider?">
+  Optional service provider for dependency injection into function parameters.
+</ParamField>
+
+### Example: Full Pipeline with Multiple Middleware
+
+```csharp
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
+using OpenTelemetry.Trace;
+
+// Setup logging
+var loggerFactory = LoggerFactory.Create(builder => 
+    builder.AddConsole().SetMinimumLevel(LogLevel.Debug)
+);
+
+// Setup OpenTelemetry
+var tracerProvider = Sdk.CreateTracerProviderBuilder()
+    .AddSource("Microsoft.Extensions.AI")
+    .AddConsoleExporter()
+    .Build();
+
+// Setup DI for function invocation
+var services = new ServiceCollection()
+    .AddSingleton(loggerFactory)
+    .BuildServiceProvider();
+
+// Build the pipeline
+var pipeline = new ChatClientBuilder()
+    .Use(new OpenAIChatClient(
+        model: "gpt-4",
+        apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+    ))
+    .UseLogging(loggerFactory)
+    .UseOpenTelemetry()
+    .UseFunctionInvocation(services)
+    .Build();
+
+// Create agent with tools
+AIFunction weatherFunc = AIFunctionFactory.Create(
+    (string location) => $"Weather in {location} is sunny.",
+    name: "get_weather",
+    description: "Gets the weather for a location"
+);
+
+var agent = pipeline.AsAIAgent(
+    instructions: "You are a weather assistant.",
+    tools: new[] { weatherFunc },
+    services: services
+);
+
+var response = await agent.RunAsync("What's the weather in Boston?");
+Console.WriteLine(response.Text);
+```
+
+---
+
+## Custom Middleware
+
+You can create custom middleware by implementing a delegating `IChatClient`.
+
+### Example: Retry Middleware
+
+```csharp
+using Microsoft.Extensions.AI;
+using Polly;
+
+public class RetryChatClient : DelegatingChatClient
+{
+    private readonly int _maxRetries;
+
+    public RetryChatClient(IChatClient innerClient, int maxRetries = 3)
+        : base(innerClient)
+    {
+        _maxRetries = maxRetries;
+    }
+
+    public override async Task<ChatResponse> GetResponseAsync(
+        IList<ChatMessage> messages,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        var retryPolicy = Policy
+            .Handle<Exception>()
+            .WaitAndRetryAsync(
+                _maxRetries,
+                retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt))
+            );
+
+        return await retryPolicy.ExecuteAsync(async () =>
+            await base.GetResponseAsync(messages, options, cancellationToken)
+        );
+    }
+
+    public override async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+        IList<ChatMessage> messages,
+        ChatOptions? options = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default
+    )
+    {
+        await foreach (var update in base.GetStreamingResponseAsync(messages, options, cancellationToken))
+        {
+            yield return update;
+        }
+    }
+}
+
+// Use the custom middleware
+var pipeline = new ChatClientBuilder()
+    .Use(new OpenAIChatClient(
+        model: "gpt-4",
+        apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+    ))
+    .Use((innerClient, services) => new RetryChatClient(innerClient, maxRetries: 3))
+    .Build();
+
+var agent = pipeline.AsAIAgent(name: "Assistant");
+```
+
+### Example: Caching Middleware
+
+```csharp
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Caching.Memory;
+
+public class CachingChatClient : DelegatingChatClient
+{
+    private readonly IMemoryCache _cache;
+    private readonly TimeSpan _cacheDuration;
+
+    public CachingChatClient(
+        IChatClient innerClient,
+        IMemoryCache cache,
+        TimeSpan cacheDuration
+    ) : base(innerClient)
+    {
+        _cache = cache;
+        _cacheDuration = cacheDuration;
+    }
+
+    public override async Task<ChatResponse> GetResponseAsync(
+        IList<ChatMessage> messages,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        // Create cache key from messages
+        var cacheKey = CreateCacheKey(messages);
+
+        // Try to get from cache
+        if (_cache.TryGetValue<ChatResponse>(cacheKey, out var cachedResponse))
+        {
+            return cachedResponse!;
+        }
+
+        // Call inner client
+        var response = await base.GetResponseAsync(messages, options, cancellationToken);
+
+        // Cache the response
+        _cache.Set(cacheKey, response, _cacheDuration);
+
+        return response;
+    }
+
+    private string CreateCacheKey(IList<ChatMessage> messages)
+    {
+        return string.Join("|", messages.Select(m => $"{m.Role}:{m.Text}"));
+    }
+}
+
+// Use the caching middleware
+var cache = new MemoryCache(new MemoryCacheOptions());
+
+var pipeline = new ChatClientBuilder()
+    .Use(new OpenAIChatClient(
+        model: "gpt-4",
+        apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+    ))
+    .Use((innerClient, services) => new CachingChatClient(
+        innerClient,
+        cache,
+        TimeSpan.FromMinutes(5)
+    ))
+    .Build();
+
+var agent = pipeline.AsAIAgent(name: "CachedAssistant");
+
+// First call - hits the API
+var response1 = await agent.RunAsync("What is 2+2?");
+
+// Second call - returns cached result
+var response2 = await agent.RunAsync("What is 2+2?");
+```
+
+### Example: Rate Limiting Middleware
+
+```csharp
+using Microsoft.Extensions.AI;
+using System.Threading.RateLimiting;
+
+public class RateLimitingChatClient : DelegatingChatClient
+{
+    private readonly RateLimiter _rateLimiter;
+
+    public RateLimitingChatClient(IChatClient innerClient, RateLimiter rateLimiter)
+        : base(innerClient)
+    {
+        _rateLimiter = rateLimiter;
+    }
+
+    public override async Task<ChatResponse> GetResponseAsync(
+        IList<ChatMessage> messages,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        using var lease = await _rateLimiter.AcquireAsync(1, cancellationToken);
+        
+        if (!lease.IsAcquired)
+        {
+            throw new InvalidOperationException("Rate limit exceeded");
+        }
+
+        return await base.GetResponseAsync(messages, options, cancellationToken);
+    }
+}
+
+// Use rate limiting
+var rateLimiter = new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
+{
+    TokenLimit = 10,
+    ReplenishmentPeriod = TimeSpan.FromMinutes(1),
+    TokensPerPeriod = 10,
+    QueueLimit = 0
+});
+
+var pipeline = new ChatClientBuilder()
+    .Use(new OpenAIChatClient(
+        model: "gpt-4",
+        apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+    ))
+    .Use((innerClient, services) => new RateLimitingChatClient(innerClient, rateLimiter))
+    .Build();
+
+var agent = pipeline.AsAIAgent(name: "RateLimitedAssistant");
+```
+
+### Example: Request/Response Transformation
+
+```csharp
+using Microsoft.Extensions.AI;
+
+public class TransformingChatClient : DelegatingChatClient
+{
+    private readonly string _systemPrefix;
+
+    public TransformingChatClient(IChatClient innerClient, string systemPrefix)
+        : base(innerClient)
+    {
+        _systemPrefix = systemPrefix;
+    }
+
+    public override async Task<ChatResponse> GetResponseAsync(
+        IList<ChatMessage> messages,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        // Transform request: add prefix to all user messages
+        var transformedMessages = messages.Select(m =>
+        {
+            if (m.Role == ChatRole.User)
+            {
+                return new ChatMessage(
+                    ChatRole.User,
+                    $"{_systemPrefix} {m.Text}"
+                );
+            }
+            return m;
+        }).ToList();
+
+        // Call inner client with transformed messages
+        var response = await base.GetResponseAsync(transformedMessages, options, cancellationToken);
+
+        // Transform response: could modify messages here
+        return response;
+    }
+}
+
+// Use transforming middleware
+var pipeline = new ChatClientBuilder()
+    .Use(new OpenAIChatClient(
+        model: "gpt-4",
+        apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+    ))
+    .Use((innerClient, services) => new TransformingChatClient(
+        innerClient,
+        "[Important:]"
+    ))
+    .Build();
+
+var agent = pipeline.AsAIAgent(
+    instructions: "You are a helpful assistant.",
+    name: "TransformingAssistant"
+);
+
+var response = await agent.RunAsync("Hello!");
+// The actual message sent will be "[Important:] Hello!"
+```
+
+---
+
+## DelegatingChatClient
+
+Base class for implementing custom middleware that wraps another `IChatClient`.
+
+```csharp
+using Microsoft.Extensions.AI;
+
+public abstract class DelegatingChatClient : IChatClient
+{
+    protected IChatClient InnerClient { get; }
+
+    protected DelegatingChatClient(IChatClient innerClient)
+    {
+        InnerClient = innerClient ?? throw new ArgumentNullException(nameof(innerClient));
+    }
+
+    // Virtual methods that delegate to InnerClient by default
+    public virtual Task<ChatResponse> GetResponseAsync(...)
+    public virtual IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(...)
+    public virtual object? GetService(Type serviceType, object? serviceKey = null)
+    public virtual void Dispose()
+}
+```
+
+### Overview
+
+`DelegatingChatClient` provides a convenient base class for creating middleware. Override only the methods you need to intercept, and call `base` to delegate to the inner client.
+
+### Example: Logging Middleware
+
+```csharp
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
+
+public class LoggingChatClient : DelegatingChatClient
+{
+    private readonly ILogger _logger;
+
+    public LoggingChatClient(IChatClient innerClient, ILogger logger)
+        : base(innerClient)
+    {
+        _logger = logger;
+    }
+
+    public override async Task<ChatResponse> GetResponseAsync(
+        IList<ChatMessage> messages,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        _logger.LogInformation("Sending {Count} messages to chat client", messages.Count);
+        
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        
+        try
+        {
+            var response = await base.GetResponseAsync(messages, options, cancellationToken);
+            
+            stopwatch.Stop();
+            _logger.LogInformation(
+                "Received response with {Count} messages in {Duration}ms",
+                response.Messages.Count,
+                stopwatch.ElapsedMilliseconds
+            );
+            
+            return response;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _logger.LogError(
+                ex,
+                "Error getting response after {Duration}ms",
+                stopwatch.ElapsedMilliseconds
+            );
+            throw;
+        }
+    }
+}
+
+// Use the logging middleware
+var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+var logger = loggerFactory.CreateLogger<LoggingChatClient>();
+
+var pipeline = new ChatClientBuilder()
+    .Use(new OpenAIChatClient(
+        model: "gpt-4",
+        apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+    ))
+    .Use((innerClient, services) => new LoggingChatClient(innerClient, logger))
+    .Build();
+
+var agent = pipeline.AsAIAgent(name: "Assistant");
+```

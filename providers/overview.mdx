@@ -1,0 +1,254 @@
+---
+title: "Providers Overview"
+description: "Connect to different LLM providers with Microsoft Agent Framework"
+---
+
+# LLM Providers
+
+Microsoft Agent Framework supports multiple LLM providers, giving you the flexibility to choose the best model for your use case. Whether you're using Azure OpenAI, OpenAI, Anthropic, AWS Bedrock, or local models with Ollama, the framework provides a consistent API across all providers.
+
+## Supported Providers
+
+<CardGroup cols={2}>
+  <Card title="Azure OpenAI" icon="microsoft" href="/providers/azure-openai">
+    Enterprise-grade OpenAI models hosted on Azure
+  </Card>
+  <Card title="OpenAI" icon="openai" href="/providers/openai">
+    Direct integration with OpenAI's API
+  </Card>
+  <Card title="Anthropic" icon="message-bot" href="/providers/anthropic">
+    Claude models via Anthropic's API
+  </Card>
+  <Card title="Other Providers" icon="plug" href="/providers/other-providers">
+    AWS Bedrock, Ollama, GitHub Copilot, and more
+  </Card>
+</CardGroup>
+
+## Choosing a Provider
+
+When selecting a provider, consider:
+
+- **Enterprise requirements**: Azure OpenAI offers enterprise-grade SLAs, compliance, and regional deployment
+- **Model capabilities**: Different providers offer different models with varying capabilities (reasoning, vision, function calling)
+- **Cost**: Pricing varies significantly between providers and models
+- **Latency**: Geographic proximity and infrastructure affect response times
+- **Privacy**: Some providers offer better data privacy guarantees
+- **Local development**: Ollama enables local development without API costs
+
+## Common Patterns
+
+All providers follow a consistent pattern in the framework:
+
+### Chat Clients
+
+Most providers offer a chat client for direct chat completion:
+
+<CodeGroup>
+
+```python Python
+from agent_framework.azure import AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
+
+client = AzureOpenAIChatClient(credential=AzureCliCredential())
+agent = client.as_agent(
+    instructions="You are a helpful assistant.",
+    tools=[...]
+)
+```
+
+```csharp C#
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+
+var agent = new AzureOpenAIClient(
+        new Uri(endpoint),
+        new DefaultAzureCredential())
+    .GetChatClient(deploymentName)
+    .AsAIAgent(instructions: "You are a helpful assistant.");
+```
+
+</CodeGroup>
+
+### Assistant/Agent Providers
+
+Some providers offer persistent agents with managed state:
+
+<CodeGroup>
+
+```python Python
+from agent_framework.azure import AzureAIProjectAgentProvider
+from azure.identity.aio import AzureCliCredential
+
+async with (
+    AzureCliCredential() as credential,
+    AzureAIProjectAgentProvider(credential=credential) as provider
+):
+    agent = await provider.create_agent(
+        name="MyAgent",
+        instructions="You are a helpful assistant.",
+        tools=[...]
+    )
+```
+
+```csharp C#
+using Microsoft.Agents.AI.AzureAI;
+using Azure.Identity;
+
+var provider = new AzureAIProjectAgentProvider(
+    new DefaultAzureCredential(),
+    projectEndpoint);
+    
+var agent = await provider.CreateAgentAsync(
+    name: "MyAgent",
+    instructions: "You are a helpful assistant.");
+```
+
+</CodeGroup>
+
+## Authentication
+
+Authentication varies by provider:
+
+| Provider | Python | .NET |
+|----------|--------|------|
+| Azure OpenAI | `AzureCliCredential()`, API keys | `DefaultAzureCredential`, API keys |
+| OpenAI | `OPENAI_API_KEY` env var | API key in constructor |
+| Anthropic | `ANTHROPIC_API_KEY` env var | API key in constructor |
+| AWS Bedrock | AWS credentials (access key/secret) | AWS credentials |
+| Ollama | No authentication (local) | No authentication (local) |
+
+<Note>
+For production deployments, always use managed identities or secure credential management rather than API keys in code.
+</Note>
+
+## Configuration
+
+Providers can be configured via:
+
+1. **Environment variables** - Most providers read from environment variables by default
+2. **Constructor parameters** - Explicit configuration overrides environment variables
+3. **Settings classes** - Pydantic settings for structured configuration (Python)
+
+### Environment Variables
+
+Common environment variables:
+
+```bash
+# Azure OpenAI
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o
+AZURE_OPENAI_API_KEY=your-key  # Optional, use managed identity instead
+
+# OpenAI
+OPENAI_API_KEY=sk-...
+OPENAI_CHAT_MODEL_ID=gpt-4o
+
+# Anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL_ID=claude-sonnet-4-20250514
+
+# AWS Bedrock
+BEDROCK_CHAT_MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0
+BEDROCK_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your-key
+AWS_SECRET_ACCESS_KEY=your-secret
+
+# Ollama
+OLLAMA_ENDPOINT=http://localhost:11434
+OLLAMA_MODEL_ID=llama3.2
+```
+
+## Streaming Support
+
+All providers support streaming responses:
+
+<CodeGroup>
+
+```python Python
+async for chunk in agent.run(query, stream=True):
+    if chunk.text:
+        print(chunk.text, end="", flush=True)
+```
+
+```csharp C#
+await foreach (var chunk in agent.RunStreamingAsync(query))
+{
+    if (chunk.Text != null)
+        Console.Write(chunk.Text);
+}
+```
+
+</CodeGroup>
+
+## Function Calling
+
+Most providers support function calling (tool use):
+
+<CodeGroup>
+
+```python Python
+from agent_framework import tool
+from typing import Annotated
+
+@tool(approval_mode="always_require")  # Require human approval
+def get_weather(location: Annotated[str, "City name"]) -> str:
+    """Get weather for a location."""
+    return f"Weather in {location}: Sunny, 72°F"
+
+agent = client.as_agent(
+    instructions="You are a weather assistant.",
+    tools=[get_weather]  # Pass tools to agent
+)
+```
+
+```csharp C#
+using Microsoft.Extensions.AI;
+
+[Description("Get weather for a location")]
+string GetWeather([Description("City name")] string location)
+{
+    return $"Weather in {location}: Sunny, 72°F";
+}
+
+var agent = client.AsAIAgent(
+    instructions: "You are a weather assistant.",
+    tools: [AIFunctionFactory.Create(GetWeather)]
+);
+```
+
+</CodeGroup>
+
+<Warning>
+Not all models support function calling. Check the provider documentation for model capabilities.
+</Warning>
+
+## Model Capabilities
+
+| Feature | Azure OpenAI | OpenAI | Anthropic | Bedrock | Ollama |
+|---------|--------------|--------|-----------|---------|--------|
+| Function Calling | ✅ | ✅ | ✅ | ✅ | ⚠️ Limited |
+| Vision | ✅ | ✅ | ✅ | ✅ | ⚠️ Some models |
+| Streaming | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Reasoning | ✅ o1/o3 | ✅ o1/o3 | ✅ Extended thinking | ⚠️ Model dependent | ❌ |
+| Code Interpreter | ✅ Assistants | ✅ Assistants | ❌ | ❌ | ❌ |
+| File Search | ✅ Assistants | ✅ Assistants | ❌ | ❌ | ❌ |
+
+## Next Steps
+
+Explore the provider-specific documentation for detailed setup instructions, authentication patterns, and advanced features:
+
+<CardGroup cols={2}>
+  <Card title="Azure OpenAI" icon="microsoft" href="/providers/azure-openai">
+    Enterprise-grade models with Azure integration
+  </Card>
+  <Card title="OpenAI" icon="openai" href="/providers/openai">
+    Latest GPT models directly from OpenAI
+  </Card>
+  <Card title="Anthropic" icon="message-bot" href="/providers/anthropic">
+    Claude models with advanced capabilities
+  </Card>
+  <Card title="Other Providers" icon="plug" href="/providers/other-providers">
+    Bedrock, Ollama, GitHub Copilot, and more
+  </Card>
+</CardGroup>

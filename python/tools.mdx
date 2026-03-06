@@ -1,0 +1,618 @@
+---
+title: "Tools"
+description: "Add custom functionality to agents with tools in Python"
+---
+
+Tools enable agents to perform actions beyond text generation, such as retrieving data, calling APIs, or executing code. The Agent Framework provides a flexible tool system with automatic schema generation and safety controls.
+
+## Creating Tools
+
+### Basic Tool with `@tool` Decorator
+
+The `@tool` decorator converts any Python function into a tool:
+
+```python
+from agent_framework import tool
+from typing import Annotated
+from pydantic import Field
+
+@tool(approval_mode="always_require")
+def get_weather(
+    location: Annotated[str, Field(description="The city name")]
+) -> str:
+    """Get the current weather for a location."""
+    # Implementation
+    return f"The weather in {location} is sunny and 72°F."
+```
+
+<Warning>
+**Production Safety**: Always use `approval_mode="always_require"` for tools in production environments. Only use `"never_require"` for samples and testing.
+</Warning>
+
+### Tool with Multiple Parameters
+
+```python
+from datetime import datetime
+
+@tool(approval_mode="always_require")
+def schedule_meeting(
+    title: Annotated[str, Field(description="Meeting title")],
+    date: Annotated[str, Field(description="Date in YYYY-MM-DD format")],
+    duration_minutes: Annotated[int, Field(description="Duration in minutes")] = 60
+) -> str:
+    """Schedule a meeting on the calendar."""
+    return f"Meeting '{title}' scheduled for {date}, duration {duration_minutes} minutes."
+```
+
+### Async Tools
+
+Tools can be async for I/O operations:
+
+```python
+import aiohttp
+
+@tool(approval_mode="always_require")
+async def fetch_data(url: Annotated[str, Field(description="URL to fetch")]) -> str:
+    """Fetch data from a URL."""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            return await response.text()
+```
+
+## Tool Schema
+
+### Automatic Schema Inference
+
+The framework automatically generates JSON schemas from type hints:
+
+```python
+@tool(approval_mode="always_require")
+def calculate(
+    operation: Annotated[str, Field(description="Operation: add, subtract, multiply, divide")],
+    a: Annotated[float, Field(description="First number")],
+    b: Annotated[float, Field(description="Second number")]
+) -> float:
+    """Perform a mathematical operation."""
+    ops = {
+        "add": lambda: a + b,
+        "subtract": lambda: a - b,
+        "multiply": lambda: a * b,
+        "divide": lambda: a / b if b != 0 else 0
+    }
+    return ops[operation]()
+```
+
+### Explicit Schema with Pydantic
+
+Provide an explicit schema using a Pydantic model:
+
+```python
+from pydantic import BaseModel
+
+class WeatherInput(BaseModel):
+    """Input schema for the weather tool."""
+    location: Annotated[str, Field(description="City name")]
+    unit: Annotated[str, Field(description="celsius or fahrenheit")] = "celsius"
+
+@tool(
+    name="get_weather",
+    description="Get the current weather for a location.",
+    schema=WeatherInput,
+    approval_mode="always_require"
+)
+def get_weather(location: str, unit: str = "celsius") -> str:
+    """Get weather data."""
+    return f"The weather in {location} is 22 degrees {unit}."
+```
+
+### Explicit Schema with JSON
+
+Use a raw JSON schema dictionary:
+
+```python
+get_time_schema = {
+    "type": "object",
+    "properties": {
+        "timezone": {
+            "type": "string",
+            "description": "The timezone (e.g., UTC, America/New_York)",
+            "default": "UTC"
+        }
+    }
+}
+
+@tool(
+    name="get_current_time",
+    description="Get the current time in a timezone.",
+    schema=get_time_schema,
+    approval_mode="always_require"
+)
+def get_current_time(timezone: str = "UTC") -> str:
+    """Get the current time."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return f"The current time in {timezone} is {datetime.now(ZoneInfo(timezone)).isoformat()}"
+```
+
+## Tool Approval
+
+### Approval Modes
+
+Control when tools require human approval:
+
+```python
+# Always require approval (recommended for production)
+@tool(approval_mode="always_require")
+def delete_file(path: str) -> str:
+    """Delete a file."""
+    os.remove(path)
+    return f"Deleted {path}"
+
+# Never require approval (use only for safe operations in testing)
+@tool(approval_mode="never_require")
+def get_time() -> str:
+    """Get the current time."""
+    return datetime.now().isoformat()
+
+# Require approval for specific conditions
+@tool(approval_mode="conditional")
+def transfer_money(amount: float, to_account: str) -> str:
+    """Transfer money between accounts."""
+    # Approval logic determined by middleware
+    return f"Transferred ${amount} to {to_account}"
+```
+
+### Approval with Sessions
+
+Handle approvals using sessions:
+
+```python
+from agent_framework import AgentSession
+
+@tool(approval_mode="always_require")
+def send_email(to: str, subject: str, body: str) -> str:
+    """Send an email."""
+    # Email sending logic
+    return f"Email sent to {to}"
+
+session = AgentSession()
+
+# Agent requests tool execution
+response = await agent.run(
+    "Send an email to alice@example.com",
+    session=session
+)
+
+# Check if approval is needed
+if response.requires_approval:
+    # Show approval UI to user
+    approved = await show_approval_ui(response.pending_tool_calls)
+    
+    if approved:
+        # Continue with approval
+        response = await agent.run(
+            "[APPROVED]",
+            session=session
+        )
+```
+
+## Advanced Tool Patterns
+
+### Tools in Classes
+
+Organize related tools in a class:
+
+```python
+class DatabaseTools:
+    def __init__(self, connection_string: str):
+        self.connection_string = connection_string
+    
+    @tool(approval_mode="always_require")
+    def query(
+        self,
+        sql: Annotated[str, Field(description="SQL query to execute")]
+    ) -> str:
+        """Execute a SQL query."""
+        # Use self.connection_string
+        return "Query results"
+    
+    @tool(approval_mode="always_require")
+    def insert(
+        self,
+        table: Annotated[str, Field(description="Table name")],
+        data: Annotated[dict, Field(description="Data to insert")]
+    ) -> str:
+        """Insert data into a table."""
+        return f"Inserted into {table}"
+
+# Use the tools
+db_tools = DatabaseTools("postgresql://localhost/mydb")
+agent = client.as_agent(
+    name="DBAgent",
+    instructions="You can query and modify the database.",
+    tools=[db_tools.query, db_tools.insert]
+)
+```
+
+### Agent as Tool
+
+Use one agent as a tool for another:
+
+```python
+from agent_framework import tool
+
+# Specialist agent
+researcher = client.as_agent(
+    name="Researcher",
+    instructions="You are a research specialist."
+)
+
+@tool(approval_mode="always_require")
+async def research_topic(topic: str) -> str:
+    """Research a topic in depth."""
+    result = await researcher.run(f"Research: {topic}")
+    return result.text
+
+# Main agent that uses the researcher
+coordinator = client.as_agent(
+    name="Coordinator",
+    instructions="Coordinate tasks and delegate to specialists.",
+    tools=[research_topic]
+)
+
+response = await coordinator.run(
+    "Research quantum computing and summarize it"
+)
+```
+
+### Tool with Session Injection
+
+Access the session from within a tool:
+
+```python
+from agent_framework import SessionContext
+
+@tool(approval_mode="always_require")
+def get_user_preference(
+    preference_name: str,
+    ctx: SessionContext
+) -> str:
+    """Get a user's preference from session state."""
+    # Access session data
+    user_id = ctx.session.state.get("user_id")
+    prefs = load_preferences(user_id)
+    return prefs.get(preference_name, "Not set")
+
+# The framework automatically injects SessionContext
+agent = client.as_agent(
+    name="PreferenceAgent",
+    tools=[get_user_preference]
+)
+
+session = AgentSession()
+session.state["user_id"] = "user_123"
+
+response = await agent.run(
+    "What's my language preference?",
+    session=session
+)
+```
+
+### Tool Error Handling
+
+```python
+from agent_framework.exceptions import ToolException
+
+@tool(
+    approval_mode="always_require",
+    max_exceptions=3  # Retry up to 3 times on error
+)
+def flaky_api_call(endpoint: str) -> str:
+    """Call an external API that might fail."""
+    try:
+        response = requests.get(endpoint)
+        response.raise_for_status()
+        return response.text
+    except requests.HTTPError as e:
+        # Framework will retry automatically
+        raise ToolException(f"API call failed: {e}")
+```
+
+### Control Tool Execution Count
+
+```python
+@tool(
+    approval_mode="always_require",
+    max_invocations=5  # Limit to 5 calls per agent run
+)
+def expensive_operation(query: str) -> str:
+    """Perform an expensive operation."""
+    # Costly computation
+    return result
+```
+
+## Function Invocation Configuration
+
+Customize how tools are called:
+
+```python
+from agent_framework import FunctionInvocationConfiguration
+
+config = FunctionInvocationConfiguration(
+    max_iterations=10,  # Max tool execution rounds
+    max_consecutive_errors=3,  # Max consecutive errors before stopping
+    parallel_execution=True,  # Execute multiple tools in parallel
+    timeout_seconds=30  # Timeout for tool execution
+)
+
+agent = client.as_agent(
+    name="Agent",
+    instructions="You are helpful.",
+    tools=[tool1, tool2],
+    function_invocation_config=config
+)
+```
+
+## Tool Declaration Without Implementation
+
+Declare tools without providing implementations (for external execution):
+
+```python
+from agent_framework import FunctionTool
+
+# Declare tool schema only
+weather_tool = FunctionTool(
+    name="get_weather",
+    description="Get weather for a location",
+    parameters={
+        "type": "object",
+        "properties": {
+            "location": {"type": "string", "description": "City name"}
+        },
+        "required": ["location"]
+    }
+)
+
+agent = client.as_agent(
+    name="Agent",
+    instructions="Use the weather tool.",
+    tools=[weather_tool]
+)
+
+# Tool calls are included in response but not executed
+response = await agent.run("What's the weather in NYC?")
+for call in response.tool_calls:
+    print(f"Tool: {call.name}, Args: {call.arguments}")
+    # Execute externally and feed results back
+```
+
+## Built-in Tool Types
+
+### MCP Tools
+
+Model Context Protocol tools for external integrations:
+
+```python
+from agent_framework import MCPStdioTool
+
+mcp_tool = MCPStdioTool(
+    command="npx",
+    args=["-y", "@modelcontextprotocol/server-filesystem", "/workspace"],
+    env={"NODE_ENV": "production"}
+)
+
+agent = client.as_agent(
+    name="FileAgent",
+    instructions="You can access the filesystem.",
+    tools=[mcp_tool]
+)
+```
+
+### Shell Tools (Provider-Specific)
+
+Some providers support built-in shell execution:
+
+```python
+# OpenAI Responses Client with shell access
+from agent_framework.openai import OpenAIResponsesClient
+
+agent = OpenAIResponsesClient().as_agent(
+    name="ShellAgent",
+    instructions="You can run shell commands.",
+    tools=["shell"]  # Built-in shell tool
+)
+
+response = await agent.run("List files in the current directory")
+```
+
+## Tool Middleware
+
+Intercept tool executions with function middleware:
+
+```python
+from agent_framework import FunctionMiddleware, FunctionInvocationContext
+import time
+
+class LoggingFunctionMiddleware(FunctionMiddleware):
+    async def process(
+        self,
+        context: FunctionInvocationContext,
+        call_next
+    ) -> None:
+        function_name = context.function.name
+        print(f"Calling tool: {function_name}")
+        
+        start = time.time()
+        await call_next()
+        duration = time.time() - start
+        
+        print(f"Tool {function_name} completed in {duration:.2f}s")
+
+agent = client.as_agent(
+    name="Agent",
+    instructions="You are helpful.",
+    tools=[my_tool],
+    middleware=[LoggingFunctionMiddleware()]
+)
+```
+
+See the [Middleware guide](/python/middleware) for more details.
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use descriptive function names and docstrings">
+    The function name and docstring are sent to the model to help it understand when to use the tool. Be clear and specific:
+    
+    ```python
+    @tool(approval_mode="always_require")
+    def search_knowledge_base(
+        query: Annotated[str, Field(description="Search query")]
+    ) -> str:
+        """Search the company knowledge base for relevant information.
+        
+        Use this tool when the user asks questions about company policies,
+        procedures, or internal documentation.
+        """
+        return search_results
+    ```
+  </Accordion>
+  
+  <Accordion title="Provide detailed parameter descriptions">
+    Use Pydantic `Field` to add descriptions that help the model understand parameter expectations:
+    
+    ```python
+    location: Annotated[
+        str,
+        Field(description="City name (e.g., 'San Francisco', 'London')")
+    ]
+    ```
+  </Accordion>
+  
+  <Accordion title="Return structured, parseable data">
+    Return data in a format that's easy for the agent to parse and use:
+    
+    ```python
+    # Good: Structured format
+    return f"Temperature: {temp}°C, Humidity: {humidity}%, Condition: {condition}"
+    
+    # Even better: JSON
+    return json.dumps({
+        "temperature": temp,
+        "humidity": humidity,
+        "condition": condition
+    })
+    ```
+  </Accordion>
+  
+  <Accordion title="Handle errors gracefully">
+    Catch exceptions and return error messages that help the agent understand what went wrong:
+    
+    ```python
+    @tool(approval_mode="always_require")
+    def fetch_data(url: str) -> str:
+        try:
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            return response.text
+        except requests.Timeout:
+            return "Error: Request timed out after 10 seconds"
+        except requests.HTTPError as e:
+            return f"Error: HTTP {e.response.status_code} - {e.response.reason}"
+    ```
+  </Accordion>
+  
+  <Accordion title="Use approval for sensitive operations">
+    Always require approval for tools that:
+    - Modify data or state
+    - Access sensitive information
+    - Perform irreversible actions
+    - Incur costs (API calls, resource usage)
+  </Accordion>
+</AccordionGroup>
+
+## API Reference
+
+### `@tool` Decorator
+
+```python
+def tool(
+    func: Callable | None = None,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    schema: type[BaseModel] | dict | None = None,
+    approval_mode: Literal["always_require", "never_require", "conditional"] = "always_require",
+    max_invocations: int | None = None,
+    max_exceptions: int | None = None
+) -> Callable:
+    """Convert a function into a tool.
+    
+    Args:
+        func: The function to convert (auto-provided when used as decorator)
+        name: Override tool name (defaults to function name)
+        description: Override tool description (defaults to docstring)
+        schema: Explicit parameter schema (Pydantic model or JSON schema dict)
+        approval_mode: When to require approval before execution
+        max_invocations: Maximum number of times this tool can be called per run
+        max_exceptions: Number of exceptions before giving up
+    
+    Returns:
+        A FunctionTool that can be passed to an agent
+    """
+```
+
+### FunctionTool Class
+
+```python
+class FunctionTool:
+    """A tool wrapping a Python function."""
+    
+    name: str
+    description: str
+    parameters: dict  # JSON schema
+    function: Callable | None  # None for declaration-only tools
+```
+
+## Examples
+
+### Multi-Tool Agent
+
+```python
+import aiohttp
+from datetime import datetime
+
+@tool(approval_mode="always_require")
+async def search_web(query: str) -> str:
+    """Search the web for information."""
+    # Web search implementation
+    return search_results
+
+@tool(approval_mode="always_require")
+def get_current_time(timezone: str = "UTC") -> str:
+    """Get the current time in a timezone."""
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo(timezone)).isoformat()
+
+@tool(approval_mode="always_require")
+async def save_note(content: str) -> str:
+    """Save a note to storage."""
+    await db.notes.insert({"content": content, "timestamp": datetime.now()})
+    return "Note saved"
+
+agent = client.as_agent(
+    name="Assistant",
+    instructions="You are a helpful assistant with web search, time, and note-taking capabilities.",
+    tools=[search_web, get_current_time, save_note]
+)
+
+response = await agent.run(
+    "Search for Python news and save a summary"
+)
+```
+
+## Related
+
+- [Agents](/python/agents) - Using tools with agents
+- [Middleware](/python/middleware) - Intercept tool executions
+- [Workflows](/python/workflows) - Tools in workflow contexts

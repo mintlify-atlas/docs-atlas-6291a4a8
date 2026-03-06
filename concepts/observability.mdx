@@ -1,0 +1,782 @@
+---
+title: Observability
+description: Monitor and debug agents with OpenTelemetry
+---
+
+Observability in Microsoft Agent Framework is built on **OpenTelemetry**, the industry-standard framework for collecting telemetry data (traces, metrics, and logs). This enables you to monitor agent behavior, debug issues, and optimize performance in production.
+
+## What is Observability?
+
+Observability provides insight into:
+- **Agent invocations** - Track each agent run with traces
+- **Function calls** - Monitor tool execution and performance
+- **Token usage** - Measure costs and quota consumption
+- **Errors and failures** - Debug issues with detailed stack traces
+- **Performance metrics** - Identify bottlenecks and slow operations
+- **Conversation flows** - Visualize multi-turn interactions
+
+The framework automatically emits OpenTelemetry **traces**, **metrics**, and **logs** that can be exported to various backends (Azure Monitor, Aspire Dashboard, Jaeger, Prometheus, etc.).
+
+## Quick Start
+
+<Tabs>
+  <Tab title="Python">
+    ### Zero-Code Observability
+
+    Enable observability with a single function call:
+
+    ```python
+    from agent_framework.observability import configure_otel_providers
+    from agent_framework.azure import AzureOpenAIResponsesClient
+    from agent_framework import Agent, tool
+
+    # Enable observability
+    configure_otel_providers(enable_sensitive_data=True)
+
+    # Create and use agent - telemetry is automatically emitted
+    client = AzureOpenAIResponsesClient(...)
+    agent = client.as_agent(name="MyAgent", tools=[my_tool])
+
+    response = await agent.run("Hello")
+    # Traces, metrics, and logs are automatically sent to configured exporters
+    ```
+
+    ### Configuration via Environment Variables
+
+    Configure exporters through environment variables:
+
+    ```bash
+    # OpenTelemetry Protocol (OTLP) exporter for Aspire Dashboard
+    export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+
+    # Azure Monitor (Application Insights)
+    export APPLICATIONINSIGHTS_CONNECTION_STRING="InstrumentationKey=..."
+
+    # Console exporter for debugging
+    export OTEL_TRACES_EXPORTER=console
+    export OTEL_METRICS_EXPORTER=console
+    export OTEL_LOGS_EXPORTER=console
+
+    # Enable sensitive data logging (use with caution!)
+    export OTEL_AGENT_FRAMEWORK_SENSITIVE_DATA_ENABLED=true
+    ```
+
+    Then simply call `configure_otel_providers()` without arguments:
+
+    ```python
+    from agent_framework.observability import configure_otel_providers
+
+    # Reads configuration from environment variables
+    configure_otel_providers()
+    ```
+  </Tab>
+  <Tab title=".NET">
+    ### Configure OpenTelemetry
+
+    Set up OpenTelemetry with the builder pattern:
+
+    ```csharp
+    using OpenTelemetry;
+    using OpenTelemetry.Trace;
+    using OpenTelemetry.Metrics;
+    using OpenTelemetry.Logs;
+    using Microsoft.Extensions.Logging;
+
+    var otlpEndpoint = "http://localhost:4318";
+
+    // Configure tracing
+    using var tracerProvider = Sdk.CreateTracerProviderBuilder()
+        .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("MyAgent"))
+        .AddSource("*Microsoft.Agents.AI")  // Agent Framework telemetry
+        .AddHttpClientInstrumentation()     // HTTP calls to OpenAI
+        .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint))
+        .Build();
+
+    // Configure metrics
+    using var meterProvider = Sdk.CreateMeterProviderBuilder()
+        .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("MyAgent"))
+        .AddMeter("*Microsoft.Agents.AI")
+        .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint))
+        .Build();
+
+    // Configure logging
+    var serviceCollection = new ServiceCollection();
+    serviceCollection.AddLogging(builder => builder
+        .SetMinimumLevel(LogLevel.Debug)
+        .AddOpenTelemetry(options =>
+        {
+            options.SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("MyAgent"));
+            options.AddOtlpExporter(opt => opt.Endpoint = new Uri(otlpEndpoint));
+        }));
+    ```
+
+    ### Enable Agent Telemetry
+
+    Add OpenTelemetry to agents and chat clients:
+
+    ```csharp
+    var agent = client.GetChatClient(deploymentName)
+        .AsBuilder()
+        .UseFunctionInvocation()
+        .UseOpenTelemetry(
+            sourceName: "MyAgent",
+            configure: cfg => cfg.EnableSensitiveData = true)
+        .Build()
+        .AsAIAgent(
+            name: "MyAgent",
+            tools: [AIFunctionFactory.Create(MyTool)])
+        .AsBuilder()
+        .UseOpenTelemetry(
+            sourceName: "MyAgent",
+            configure: cfg => cfg.EnableSensitiveData = true)
+        .Build();
+    ```
+  </Tab>
+</Tabs>
+
+## Traces
+
+Traces provide a hierarchical view of agent execution:
+
+```
+Agent.run
+├── Agent before_run (context providers)
+├── ChatClient.get_response
+│   ├── HTTP POST /chat/completions
+│   └── Function invocation loop
+│       ├── FunctionTool.invoke (get_weather)
+│       │   └── HTTP GET api.weather.com
+│       └── ChatClient.get_response (with results)
+│           └── HTTP POST /chat/completions
+└── Agent after_run (context providers)
+```
+
+<Tabs>
+  <Tab title="Python">
+    ### Automatic Tracing
+
+    The framework automatically creates spans for:
+    - **Agent runs** - Each `agent.run()` call
+    - **Chat requests** - LLM API calls
+    - **Function invocations** - Tool executions
+    - **HTTP requests** - External API calls
+
+    ```python
+    from agent_framework.observability import configure_otel_providers, get_tracer
+    from opentelemetry.trace import SpanKind
+
+    configure_otel_providers(enable_sensitive_data=True)
+
+    # Optional: Create custom parent span
+    with get_tracer().start_as_current_span("UserRequest", kind=SpanKind.CLIENT):
+        response = await agent.run("What's the weather?")
+    ```
+
+    ### Custom Spans
+
+    Add custom spans for application-specific operations:
+
+    ```python
+    from agent_framework.observability import get_tracer
+
+    tracer = get_tracer()
+
+    async def process_request(user_id: str, query: str):
+        with tracer.start_as_current_span("ProcessRequest") as span:
+            span.set_attribute("user.id", user_id)
+            span.set_attribute("query.length", len(query))
+
+            # Load user context
+            with tracer.start_as_current_span("LoadUserContext"):
+                user = await get_user(user_id)
+
+            # Run agent
+            response = await agent.run(query, user_id=user_id)
+
+            span.set_attribute("response.tokens", response.usage_details.total_tokens)
+            return response
+    ```
+
+    ### Span Attributes
+
+    Agent framework automatically adds rich attributes:
+
+    ```python
+    # Agent span attributes
+    {
+        "agent.id": "weather-agent",
+        "agent.name": "WeatherAgent",
+        "agent.streaming": false,
+        "agent.messages.input.count": 1,
+        "agent.messages.output.count": 1,
+        "agent.usage.input_tokens": 45,
+        "agent.usage.output_tokens": 23,
+    }
+
+    # Function span attributes
+    {
+        "tool.name": "get_weather",
+        "tool.arguments": '{"location": "Seattle"}',  # if sensitive data enabled
+        "tool.result": "The weather in Seattle...",    # if sensitive data enabled
+        "tool.duration_ms": 142.5,
+    }
+    ```
+  </Tab>
+  <Tab title=".NET">
+    ### Automatic Tracing
+
+    The framework automatically creates spans with OpenTelemetry integration:
+
+    ```csharp
+    using var activitySource = new ActivitySource("MyAgent");
+
+    // Create custom parent span
+    using var activity = activitySource.StartActivity("UserRequest");
+    activity?.SetTag("user.id", userId);
+
+    var response = await agent.RunAsync("What's the weather?");
+    ```
+
+    ### Custom Spans
+
+    ```csharp
+    using System.Diagnostics;
+
+    async Task ProcessRequest(string userId, string query)
+    {
+        using var activity = activitySource.StartActivity("ProcessRequest");
+        activity?.SetTag("user.id", userId);
+        activity?.SetTag("query.length", query.Length);
+
+        // Load user context
+        using (activitySource.StartActivity("LoadUserContext"))
+        {
+            var user = await GetUserAsync(userId);
+        }
+
+        // Run agent
+        var response = await agent.RunAsync(query);
+        activity?.SetTag("response.tokens", response.Usage?.TotalTokens ?? 0);
+
+        return response;
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Metrics
+
+Metrics provide quantitative measurements over time:
+
+<Tabs>
+  <Tab title="Python">
+    ### Built-in Metrics
+
+    The framework automatically emits:
+
+    | Metric | Type | Description |
+    |--------|------|-------------|
+    | `agent.invocation.duration` | Histogram | Agent run duration (seconds) |
+    | `function.invocation.duration` | Histogram | Function execution time (seconds) |
+    | `agent.token.usage` | Counter | Token consumption by model |
+
+    ### Custom Metrics
+
+    Add application-specific metrics:
+
+    ```python
+    from agent_framework.observability import get_meter
+
+    meter = get_meter()
+
+    # Create counters
+    request_counter = meter.create_counter(
+        "agent.requests.total",
+        description="Total agent requests",
+    )
+
+    # Create histograms
+    response_time = meter.create_histogram(
+        "agent.response.time",
+        unit="seconds",
+        description="Agent response time",
+    )
+
+    # Record metrics
+    async def handle_request(query: str):
+        start = time.time()
+        try:
+            response = await agent.run(query)
+            request_counter.add(1, {"status": "success"})
+            return response
+        except Exception as e:
+            request_counter.add(1, {"status": "error", "error_type": type(e).__name__})
+            raise
+        finally:
+            duration = time.time() - start
+            response_time.record(duration, {"status": "success"})
+    ```
+  </Tab>
+  <Tab title=".NET">
+    ### Built-in Metrics
+
+    The framework emits metrics through OpenTelemetry:
+
+    ```csharp
+    using var meterProvider = Sdk.CreateMeterProviderBuilder()
+        .AddMeter("*Microsoft.Agents.AI")
+        .AddOtlpExporter()
+        .Build();
+    ```
+
+    ### Custom Metrics
+
+    ```csharp
+    using var meter = new Meter("MyAgent");
+
+    var requestCounter = meter.CreateCounter<int>(
+        "agent_requests_total",
+        description: "Total agent requests");
+
+    var responseTime = meter.CreateHistogram<double>(
+        "agent_response_time_seconds",
+        description: "Agent response time");
+
+    // Record metrics
+    async Task HandleRequest(string query)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var response = await agent.RunAsync(query);
+            requestCounter.Add(1, new KeyValuePair<string, object?>("status", "success"));
+            return response;
+        }
+        catch (Exception ex)
+        {
+            requestCounter.Add(1,
+                new KeyValuePair<string, object?>("status", "error"),
+                new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
+            throw;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            responseTime.Record(stopwatch.Elapsed.TotalSeconds,
+                new KeyValuePair<string, object?>("status", "success"));
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Logs
+
+<Tabs>
+  <Tab title="Python">
+    ### Automatic Logging
+
+    The framework uses Python's `logging` module:
+
+    ```python
+    import logging
+    from agent_framework.observability import configure_otel_providers
+
+    # Configure logging level
+    logging.basicConfig(level=logging.INFO)
+
+    # Enable OpenTelemetry log export
+    configure_otel_providers()
+
+    # Framework automatically logs:
+    # INFO: Agent invocation started
+    # DEBUG: Function get_weather called with arguments: {"location": "Seattle"}
+    # INFO: Function get_weather succeeded in 0.14s
+    # INFO: Agent invocation completed
+    ```
+
+    ### Custom Logging
+
+    ```python
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    async def handle_request(user_id: str, query: str):
+        logger.info("Processing request", extra={
+            "user_id": user_id,
+            "query_length": len(query),
+        })
+
+        try:
+            response = await agent.run(query)
+            logger.info("Request completed", extra={
+                "tokens": response.usage_details.total_tokens,
+            })
+            return response
+        except Exception as e:
+            logger.error("Request failed", exc_info=True, extra={
+                "error_type": type(e).__name__,
+            })
+            raise
+    ```
+  </Tab>
+  <Tab title=".NET">
+    ### Structured Logging
+
+    ```csharp
+    using Microsoft.Extensions.Logging;
+
+    var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
+    var logger = loggerFactory.CreateLogger<Program>();
+
+    logger.LogInformation("Agent created with ID: {AgentId}", agent.Id);
+
+    // Use log scopes for correlation
+    using (logger.BeginScope(new Dictionary<string, object>
+    {
+        ["SessionId"] = sessionId,
+        ["UserId"] = userId
+    }))
+    {
+        logger.LogInformation("Processing request: {Query}", query);
+        var response = await agent.RunAsync(query);
+        logger.LogInformation("Request completed successfully");
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Visualization & Analysis
+
+### Aspire Dashboard
+
+The .NET Aspire Dashboard provides a local development UI for viewing telemetry:
+
+```bash
+# Start Aspire Dashboard
+docker run -d --name aspire-dashboard -p 18888:18888 -p 4317:18889 -p 4318:18890 \
+    mcr.microsoft.com/dotnet/nightly/aspire-dashboard:9.0-preview
+
+# Configure endpoint
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+
+# Run your agent - telemetry appears in dashboard at http://localhost:18888
+```
+
+### Azure Monitor (Application Insights)
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    import os
+    from agent_framework.observability import configure_otel_providers
+
+    # Configure Application Insights
+    os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"] = "InstrumentationKey=..."
+
+    configure_otel_providers()
+
+    # Telemetry is sent to Azure Monitor
+    ```
+  </Tab>
+  <Tab title=".NET">
+    ```csharp
+    using Azure.Monitor.OpenTelemetry.Exporter;
+
+    var connectionString = Environment.GetEnvironmentVariable(
+        "APPLICATIONINSIGHTS_CONNECTION_STRING");
+
+    var tracerProvider = Sdk.CreateTracerProviderBuilder()
+        .AddSource("*Microsoft.Agents.AI")
+        .AddAzureMonitorTraceExporter(options =>
+            options.ConnectionString = connectionString)
+        .Build();
+    ```
+  </Tab>
+</Tabs>
+
+### Jaeger (Distributed Tracing)
+
+```bash
+# Start Jaeger
+docker run -d --name jaeger \
+    -p 16686:16686 \
+    -p 4317:4317 \
+    jaegertracing/all-in-one:latest
+
+# Configure endpoint
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+
+# View traces at http://localhost:16686
+```
+
+## Sensitive Data
+
+<Warning>
+**Security Warning**
+
+Enabling sensitive data logging includes:
+- User messages and prompts
+- Agent responses
+- Function arguments and results
+- API keys (if logged)
+
+**Only enable in secure development environments. Never in production.**
+</Warning>
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    # Enable sensitive data (development only!)
+    configure_otel_providers(enable_sensitive_data=True)
+
+    # Or via environment variable
+    os.environ["OTEL_AGENT_FRAMEWORK_SENSITIVE_DATA_ENABLED"] = "true"
+    ```
+  </Tab>
+  <Tab title=".NET">
+    ```csharp
+    .UseOpenTelemetry(
+        sourceName: "MyAgent",
+        configure: cfg => cfg.EnableSensitiveData = true)  // Development only!
+    ```
+  </Tab>
+</Tabs>
+
+## Complete Example
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    # agent_observability.py
+    import asyncio
+    import os
+    from random import randint
+    from typing import Annotated
+
+    from agent_framework import Agent, tool
+    from agent_framework.observability import configure_otel_providers, get_tracer
+    from agent_framework.openai import OpenAIChatClient
+    from opentelemetry.trace import SpanKind
+    from opentelemetry.trace.span import format_trace_id
+    from pydantic import Field
+
+    # Configure observability
+    configure_otel_providers(enable_sensitive_data=True)
+
+    @tool(approval_mode="never_require")
+    async def get_weather(
+        location: Annotated[str, Field(description="The location")],
+    ) -> str:
+        """Get the weather for a given location."""
+        await asyncio.sleep(randint(0, 10) / 10.0)
+        conditions = ["sunny", "cloudy", "rainy", "stormy"]
+        return f"The weather in {location} is {conditions[randint(0, 3)]}"
+
+    async def main():
+        questions = [
+            "What's the weather in Amsterdam?",
+            "and in Paris, and which is better?",
+            "Why is the sky blue?",
+        ]
+
+        # Create parent span for the scenario
+        with get_tracer().start_as_current_span(
+            "Scenario: Agent Chat",
+            kind=SpanKind.CLIENT
+        ) as span:
+            print(f"Trace ID: {format_trace_id(span.get_span_context().trace_id)}")
+
+            agent = Agent(
+                client=OpenAIChatClient(),
+                tools=get_weather,
+                name="WeatherAgent",
+                instructions="You are a weather assistant.",
+                id="weather-agent",
+            )
+
+            session = agent.create_session()
+
+            for question in questions:
+                print(f"\nUser: {question}")
+                print(f"{agent.name}: ", end="")
+                async for update in agent.run(question, session=session, stream=True):
+                    if update.text:
+                        print(update.text, end="")
+                print()
+
+    if __name__ == "__main__":
+        asyncio.run(main())
+    ```
+  </Tab>
+  <Tab title=".NET">
+    ```csharp
+    // Program.cs
+    using System.ComponentModel;
+    using Azure.AI.OpenAI;
+    using Azure.Identity;
+    using Microsoft.Agents.AI;
+    using Microsoft.Extensions.AI;
+    using OpenTelemetry;
+    using OpenTelemetry.Trace;
+    using OpenTelemetry.Metrics;
+    using System.Diagnostics;
+
+    const string SourceName = "WeatherAgent";
+    var otlpEndpoint = "http://localhost:4318";
+
+    // Configure OpenTelemetry
+    using var tracerProvider = Sdk.CreateTracerProviderBuilder()
+        .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(SourceName))
+        .AddSource(SourceName)
+        .AddSource("*Microsoft.Agents.AI")
+        .AddHttpClientInstrumentation()
+        .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint))
+        .Build();
+
+    using var meterProvider = Sdk.CreateMeterProviderBuilder()
+        .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(SourceName))
+        .AddMeter(SourceName)
+        .AddMeter("*Microsoft.Agents.AI")
+        .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint))
+        .Build();
+
+    using var activitySource = new ActivitySource(SourceName);
+
+    [Description("Get the weather for a location.")]
+    static async Task<string> GetWeather(
+        [Description("The location")] string location)
+    {
+        await Task.Delay(Random.Shared.Next(0, 1000));
+        var conditions = new[] { "sunny", "cloudy", "rainy", "stormy" };
+        return $"The weather in {location} is {conditions[Random.Shared.Next(conditions.Length)]}";
+    }
+
+    var agent = new AzureOpenAIClient(
+            new Uri(Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")!),
+            new DefaultAzureCredential())
+        .GetChatClient("gpt-4o-mini")
+        .AsBuilder()
+        .UseFunctionInvocation()
+        .UseOpenTelemetry(SourceName, cfg => cfg.EnableSensitiveData = true)
+        .Build()
+        .AsAIAgent(
+            name: "WeatherAgent",
+            instructions: "You are a weather assistant.",
+            tools: [AIFunctionFactory.Create(GetWeather)])
+        .AsBuilder()
+        .UseOpenTelemetry(SourceName, cfg => cfg.EnableSensitiveData = true)
+        .Build();
+
+    var session = await agent.CreateSessionAsync();
+
+    using var activity = activitySource.StartActivity("Scenario: Agent Chat");
+    Console.WriteLine($"Trace ID: {activity?.TraceId}");
+
+    var questions = new[]
+    {
+        "What's the weather in Amsterdam?",
+        "and in Paris, and which is better?",
+        "Why is the sky blue?"
+    };
+
+    foreach (var question in questions)
+    {
+        Console.WriteLine($"\nUser: {question}");
+        Console.Write("Agent: ");
+        await foreach (var update in agent.RunStreamingAsync(question, session))
+        {
+            Console.Write(update.Text);
+        }
+        Console.WriteLine();
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Best Practices
+
+<Note>
+**Observability Tips**
+
+1. **Always Enable in Production**: Observability is essential for debugging
+2. **Use Sampling**: Sample high-volume traces to reduce costs
+3. **Add Custom Spans**: Instrument critical business operations
+4. **Set Alerts**: Monitor error rates and latency thresholds
+5. **Correlate Logs**: Use trace IDs to correlate logs with traces
+6. **Tag Resources**: Add service name and version to all telemetry
+7. **Monitor Costs**: Track token usage metrics for cost optimization
+</Note>
+
+<Warning>
+**Production Considerations**
+
+- **Disable Sensitive Data**: Never log sensitive data in production
+- **Sampling Strategy**: Use tail-based sampling for cost control
+- **Data Retention**: Configure appropriate retention policies
+- **PII Compliance**: Ensure telemetry complies with privacy regulations
+- **Performance**: Observability should add less than 1% overhead
+- **Alerting**: Set up alerts for errors, latency, and quota limits
+</Warning>
+
+## Troubleshooting
+
+### No Telemetry Appearing
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    # Check if observability is enabled
+    from agent_framework.observability import OBSERVABILITY_SETTINGS
+    print(f"Enabled: {OBSERVABILITY_SETTINGS.ENABLED}")
+
+    # Verify exporter configuration
+    import os
+    print(f"OTLP Endpoint: {os.getenv('OTEL_EXPORTER_OTLP_ENDPOINT')}")
+
+    # Use console exporter for debugging
+    os.environ["OTEL_TRACES_EXPORTER"] = "console"
+    configure_otel_providers()
+    ```
+  </Tab>
+  <Tab title=".NET">
+    ```csharp
+    // Add console exporter for debugging
+    .AddConsoleExporter()
+
+    // Verify sources are registered
+    .AddSource("*Microsoft.Agents.AI")
+    ```
+  </Tab>
+</Tabs>
+
+### High Overhead
+
+- Reduce sampling rate
+- Disable sensitive data logging
+- Use batch exporters
+- Filter out low-value spans
+
+### Missing Attributes
+
+- Enable sensitive data (development only)
+- Check span attribute limits in exporter
+- Verify OpenTelemetry SDK version
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Agents" icon="robot" href="/concepts/agents">
+    Learn about agent telemetry
+  </Card>
+  <Card title="Middleware" icon="layer-group" href="/concepts/middleware">
+    Add custom telemetry with middleware
+  </Card>
+  <Card title="Tools" icon="wrench" href="/concepts/tools">
+    Monitor tool execution
+  </Card>
+  <Card title="Sessions" icon="comments" href="/concepts/sessions">
+    Track session lifecycle
+  </Card>
+</CardGroup>

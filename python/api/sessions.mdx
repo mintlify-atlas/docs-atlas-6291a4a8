@@ -1,0 +1,639 @@
+---
+title: Sessions
+description: API reference for Sessions and Context Providers in Microsoft Agent Framework Python SDK
+---
+
+# Sessions API Reference
+
+Session management and context provider system for conversation state and context engineering.
+
+## AgentSession
+
+A lightweight conversation session with an agent.
+
+```python
+from agent_framework import AgentSession
+```
+
+### Constructor
+
+```python
+session = AgentSession(
+    session_id="session-123",
+    service_session_id="thread-abc"
+)
+```
+
+<ParamField path="session_id" type="str | None">
+  Unique identifier for this session. If None, a UUID will be generated.
+</ParamField>
+
+<ParamField path="service_session_id" type="str | None">
+  Service-managed session ID (e.g., thread ID from Assistants API). If using service-side storage.
+</ParamField>
+
+### Properties
+
+<ParamField path="session_id" type="str" readonly>
+  The unique identifier for this session.
+</ParamField>
+
+<ParamField path="service_session_id" type="str | None">
+  Service-managed session ID. Can be updated after creation.
+</ParamField>
+
+<ParamField path="state" type="dict[str, Any]">
+  Mutable state dictionary shared with all providers. Used to store conversation history, context, and provider-specific data.
+</ParamField>
+
+### Methods
+
+#### to_dict()
+
+Serialize session to a plain dict for storage/transfer.
+
+```python
+data = session.to_dict()
+```
+
+<ResponseField name="return" type="dict[str, Any]">
+  Serialized session dictionary. Values in `state` that implement `to_dict()`/`from_dict()` are automatically serialized.
+</ResponseField>
+
+#### from_dict() (classmethod)
+
+Restore session from a previously serialized dict.
+
+```python
+session = AgentSession.from_dict(data)
+```
+
+<ParamField path="data" type="dict[str, Any]" required>
+  Dictionary from a previous `to_dict()` call.
+</ParamField>
+
+<ResponseField name="return" type="AgentSession">
+  Restored AgentSession instance.
+</ResponseField>
+
+### Example: Basic Session Usage
+
+```python
+from agent_framework import Agent, AgentSession
+
+# Create a session
+session = AgentSession()
+
+# Use with agent runs
+agent = Agent(client=client, name="assistant")
+response1 = await agent.run("Hello", session=session)
+response2 = await agent.run("How are you?", session=session)
+
+# Serialize for storage
+data = session.to_dict()
+# Store in database...
+
+# Later, restore from storage
+restored_session = AgentSession.from_dict(data)
+response3 = await agent.run("Continue conversation", session=restored_session)
+```
+
+---
+
+## SessionContext
+
+Per-invocation state passed through the context provider pipeline.
+
+```python
+from agent_framework import SessionContext
+```
+
+### Attributes
+
+<ParamField path="session_id" type="str | None" readonly>
+  The ID of the current session.
+</ParamField>
+
+<ParamField path="service_session_id" type="str | None" readonly>
+  Service-managed session ID.
+</ParamField>
+
+<ParamField path="input_messages" type="list[Message]" readonly>
+  The new messages being sent to the agent (set by caller).
+</ParamField>
+
+<ParamField path="context_messages" type="dict[str, list[Message]]">
+  Dictionary mapping source_id -> messages added by that provider. Maintains insertion order (provider execution order).
+</ParamField>
+
+<ParamField path="instructions" type="list[str]">
+  Additional instructions added by providers.
+</ParamField>
+
+<ParamField path="tools" type="list[Any]">
+  Additional tools added by providers.
+</ParamField>
+
+<ParamField path="response" type="AgentResponse | None" readonly>
+  After invocation, contains the full AgentResponse. Read-only for providers.
+</ParamField>
+
+<ParamField path="options" type="dict[str, Any]" readonly>
+  Options passed to agent.run() - read-only, for reflection only.
+</ParamField>
+
+<ParamField path="metadata" type="dict[str, Any]">
+  Shared metadata dictionary for cross-provider communication.
+</ParamField>
+
+### Methods
+
+#### extend_messages()
+
+Add context messages from a specific source.
+
+```python
+context.extend_messages(
+    source=provider,  # or source_id string
+    messages=[Message(role="system", text="Context info")]
+)
+```
+
+<ParamField path="source" type="str | object" required>
+  Either a plain source_id string, or an object with a `source_id` attribute (e.g., a context provider).
+</ParamField>
+
+<ParamField path="messages" type="Sequence[Message]" required>
+  The messages to add. Messages are copied before attribution is added.
+</ParamField>
+
+#### extend_instructions()
+
+Add instructions to be prepended to the conversation.
+
+```python
+context.extend_instructions(
+    source_id="rag_provider",
+    instructions="Use the following context: ..."
+)
+```
+
+<ParamField path="source_id" type="str" required>
+  The provider source_id adding these instructions.
+</ParamField>
+
+<ParamField path="instructions" type="str | Sequence[str]" required>
+  A single instruction string or sequence of strings.
+</ParamField>
+
+#### extend_tools()
+
+Add tools to be available for this invocation.
+
+```python
+context.extend_tools(
+    source_id="tool_provider",
+    tools=[search_tool, calculator_tool]
+)
+```
+
+<ParamField path="source_id" type="str" required>
+  The provider source_id adding these tools.
+</ParamField>
+
+<ParamField path="tools" type="Sequence[Any]" required>
+  The tools to add. Tools are attributed with source metadata.
+</ParamField>
+
+#### get_messages()
+
+Get context messages, optionally filtered and including input/response.
+
+```python
+all_messages = context.get_messages(
+    sources={"history", "rag"},
+    exclude_sources={"temp"},
+    include_input=True,
+    include_response=True
+)
+```
+
+<ParamField path="sources" type="set[str] | None">
+  If provided, only include context messages from these sources.
+</ParamField>
+
+<ParamField path="exclude_sources" type="set[str] | None">
+  If provided, exclude context messages from these sources.
+</ParamField>
+
+<ParamField path="include_input" type="bool" default="False">
+  If True, append input_messages after context.
+</ParamField>
+
+<ParamField path="include_response" type="bool" default="False">
+  If True, append response.messages at the end.
+</ParamField>
+
+<ResponseField name="return" type="list[Message]">
+  Flattened list of messages in conversation order.
+</ResponseField>
+
+---
+
+## BaseContextProvider
+
+Base class for context providers that participate in the context engineering pipeline.
+
+```python
+from agent_framework import BaseContextProvider
+```
+
+### Constructor
+
+```python
+class MyContextProvider(BaseContextProvider):
+    def __init__(self):
+        super().__init__(source_id="my_provider")
+    
+    async def before_run(self, *, agent, session, context, state):
+        # Add context before model invocation
+        context.extend_messages(self, [...messages...])
+    
+    async def after_run(self, *, agent, session, context, state):
+        # Process response after model invocation
+        pass
+
+provider = MyContextProvider()
+```
+
+<ParamField path="source_id" type="str" required>
+  Unique identifier for this provider instance. Used for message/tool attribution.
+</ParamField>
+
+### Methods
+
+#### before_run()
+
+Called before model invocation.
+
+```python
+async def before_run(
+    self,
+    *,
+    agent: SupportsAgentRun,
+    session: AgentSession,
+    context: SessionContext,
+    state: dict[str, Any]
+) -> None:
+    """Add context before model invocation."""
+    context.extend_messages(self, messages)
+    context.extend_instructions(self.source_id, "Custom instructions")
+    context.extend_tools(self.source_id, [tool])
+```
+
+<ParamField path="agent" type="SupportsAgentRun" required>
+  The agent running this invocation.
+</ParamField>
+
+<ParamField path="session" type="AgentSession" required>
+  The current session.
+</ParamField>
+
+<ParamField path="context" type="SessionContext" required>
+  The invocation context - add messages/instructions/tools here.
+</ParamField>
+
+<ParamField path="state" type="dict[str, Any]" required>
+  The provider-scoped mutable state dict. This is a reference to `session.state[provider.source_id]`.
+</ParamField>
+
+#### after_run()
+
+Called after model invocation.
+
+```python
+async def after_run(
+    self,
+    *,
+    agent: SupportsAgentRun,
+    session: AgentSession,
+    context: SessionContext,
+    state: dict[str, Any]
+) -> None:
+    """Process response after model invocation."""
+    # Access the response
+    if context.response:
+        # Store messages, extract info, etc.
+        pass
+```
+
+<ParamField path="agent" type="SupportsAgentRun" required>
+  The agent that ran this invocation.
+</ParamField>
+
+<ParamField path="session" type="AgentSession" required>
+  The current session.
+</ParamField>
+
+<ParamField path="context" type="SessionContext" required>
+  The invocation context with response populated.
+</ParamField>
+
+<ParamField path="state" type="dict[str, Any]" required>
+  The provider-scoped mutable state dict.
+</ParamField>
+
+### Example: RAG Context Provider
+
+```python
+from agent_framework import BaseContextProvider, Agent, Message
+
+class RAGProvider(BaseContextProvider):
+    def __init__(self, retriever):
+        super().__init__(source_id="rag")
+        self.retriever = retriever
+    
+    async def before_run(self, *, agent, session, context, state):
+        # Get user query from input messages
+        query = context.input_messages[-1].text if context.input_messages else ""
+        
+        # Retrieve relevant documents
+        docs = await self.retriever.retrieve(query)
+        
+        # Add as context messages
+        context_msgs = [
+            Message(role="system", text=f"Context: {doc}")
+            for doc in docs
+        ]
+        context.extend_messages(self, context_msgs)
+
+# Use with agent
+agent = Agent(
+    client=client,
+    name="rag-assistant",
+    context_providers=[RAGProvider(my_retriever)]
+)
+```
+
+---
+
+## BaseHistoryProvider
+
+Base class for conversation history storage providers.
+
+```python
+from agent_framework import BaseHistoryProvider
+```
+
+### Constructor
+
+```python
+class MyHistoryProvider(BaseHistoryProvider):
+    async def get_messages(self, session_id, **kwargs):
+        # Load messages from storage
+        return messages
+    
+    async def save_messages(self, session_id, messages, **kwargs):
+        # Save messages to storage
+        pass
+
+provider = MyHistoryProvider(
+    source_id="my_history",
+    load_messages=True,
+    store_inputs=True,
+    store_outputs=True
+)
+```
+
+<ParamField path="source_id" type="str" required>
+  Unique identifier for this provider instance.
+</ParamField>
+
+<ParamField path="load_messages" type="bool" default="True">
+  Whether to load messages before invocation. When False, the agent skips calling `before_run` entirely.
+</ParamField>
+
+<ParamField path="store_inputs" type="bool" default="True">
+  Whether to store input messages.
+</ParamField>
+
+<ParamField path="store_context_messages" type="bool" default="False">
+  Whether to store context from other providers.
+</ParamField>
+
+<ParamField path="store_context_from" type="set[str] | None">
+  If set, only store context from these source_ids.
+</ParamField>
+
+<ParamField path="store_outputs" type="bool" default="True">
+  Whether to store response messages.
+</ParamField>
+
+### Abstract Methods
+
+#### get_messages()
+
+Retrieve stored messages for this session.
+
+```python
+async def get_messages(
+    self,
+    session_id: str | None,
+    **kwargs: Any
+) -> list[Message]:
+    """Load messages from storage."""
+    # Implementation
+    return messages
+```
+
+<ParamField path="session_id" type="str | None" required>
+  The session ID to retrieve messages for.
+</ParamField>
+
+<ParamField path="**kwargs" type="Any">
+  Additional arguments (e.g., `state` for in-memory providers).
+</ParamField>
+
+<ResponseField name="return" type="list[Message]">
+  List of stored messages.
+</ResponseField>
+
+#### save_messages()
+
+Persist messages for this session.
+
+```python
+async def save_messages(
+    self,
+    session_id: str | None,
+    messages: Sequence[Message],
+    **kwargs: Any
+) -> None:
+    """Save messages to storage."""
+    # Implementation
+```
+
+<ParamField path="session_id" type="str | None" required>
+  The session ID to store messages for.
+</ParamField>
+
+<ParamField path="messages" type="Sequence[Message]" required>
+  The messages to persist.
+</ParamField>
+
+<ParamField path="**kwargs" type="Any">
+  Additional arguments.
+</ParamField>
+
+### Example: Database History Provider
+
+```python
+from agent_framework import BaseHistoryProvider, Message
+
+class DatabaseHistoryProvider(BaseHistoryProvider):
+    def __init__(self, db_connection):
+        super().__init__(source_id="db_history")
+        self.db = db_connection
+    
+    async def get_messages(self, session_id, **kwargs):
+        if not session_id:
+            return []
+        rows = await self.db.query(
+            "SELECT * FROM messages WHERE session_id = ?",
+            session_id
+        )
+        return [Message.from_dict(row) for row in rows]
+    
+    async def save_messages(self, session_id, messages, **kwargs):
+        if not session_id:
+            return
+        for msg in messages:
+            await self.db.execute(
+                "INSERT INTO messages (session_id, data) VALUES (?, ?)",
+                session_id, msg.to_dict()
+            )
+
+# Use with agent
+agent = Agent(
+    client=client,
+    name="persistent-agent",
+    context_providers=[DatabaseHistoryProvider(db)]
+)
+```
+
+---
+
+## InMemoryHistoryProvider
+
+Built-in history provider that stores messages in session.state.
+
+```python
+from agent_framework import InMemoryHistoryProvider
+```
+
+### Constructor
+
+```python
+provider = InMemoryHistoryProvider(
+    source_id="in_memory",  # Optional, defaults to "in_memory"
+    load_messages=True,
+    store_inputs=True,
+    store_outputs=True
+)
+```
+
+<ParamField path="source_id" type="str | None" default="in_memory">
+  Unique identifier for this provider instance.
+</ParamField>
+
+<ParamField path="load_messages" type="bool" default="True">
+  Whether to load messages before invocation.
+</ParamField>
+
+<ParamField path="store_inputs" type="bool" default="True">
+  Whether to store input messages.
+</ParamField>
+
+<ParamField path="store_context_messages" type="bool" default="False">
+  Whether to store context from other providers.
+</ParamField>
+
+<ParamField path="store_context_from" type="set[str] | None">
+  If set, only store context from these source_ids.
+</ParamField>
+
+<ParamField path="store_outputs" type="bool" default="True">
+  Whether to store response messages.
+</ParamField>
+
+### Notes
+
+- Messages are stored in `state["messages"]` as a list of Message objects
+- Serialization to/from dicts is handled by `AgentSession.to_dict()`/`from_dict()`
+- This provider holds no instance state - all data lives in the session's state dict
+- Auto-added by the agent for local sessions when no providers are configured and service-side storage is not requested
+
+### Example
+
+```python
+from agent_framework import Agent, AgentSession, InMemoryHistoryProvider
+
+# Explicitly add the provider
+agent = Agent(
+    client=client,
+    name="assistant",
+    context_providers=[InMemoryHistoryProvider()]
+)
+
+# Or let the agent auto-add it
+session = AgentSession()
+agent = Agent(client=client, name="assistant")
+response = await agent.run("Hello", session=session)
+# InMemoryHistoryProvider is automatically added
+
+# Serialize session with history
+data = session.to_dict()
+print(data["state"]["messages"])  # Messages are here
+```
+
+---
+
+## register_state_type()
+
+Register a type for automatic deserialization in session state.
+
+```python
+from agent_framework import register_state_type
+```
+
+### Usage
+
+```python
+from pydantic import BaseModel
+from agent_framework import register_state_type, AgentSession
+
+class MyModel(BaseModel):
+    value: str
+
+# Register for serialization round-trips
+register_state_type(MyModel)
+
+# Use in session state
+session = AgentSession()
+session.state["my_data"] = MyModel(value="test")
+
+# Serialize and restore
+data = session.to_dict()
+restored = AgentSession.from_dict(data)
+assert isinstance(restored.state["my_data"], MyModel)
+```
+
+<ParamField path="cls" type="type" required>
+  The type to register. Types with `to_dict`/`from_dict` methods or Pydantic BaseModel subclasses are handled automatically.
+</ParamField>
+
+### Notes
+
+- Pydantic models are auto-registered on first serialization
+- Pre-registering ensures deserialization works even if the model hasn't been serialized in this process yet
+- The type identifier defaults to `cls.__name__.lower()` but can be overridden by defining a `_get_type_identifier` classmethod

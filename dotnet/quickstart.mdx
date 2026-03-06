@@ -1,0 +1,357 @@
+---
+title: "Quickstart"
+description: "Get started with the Microsoft Agent Framework .NET SDK in 5 minutes"
+---
+
+## Overview
+
+This quickstart will guide you through creating your first AI agent using the Microsoft Agent Framework .NET SDK. You'll learn the core concepts and patterns used throughout the framework.
+
+<Note>
+  Make sure you've completed the [Installation](/dotnet/installation) guide before proceeding.
+</Note>
+
+## Core Concepts
+
+Before diving into code, let's understand the key components:
+
+<CardGroup cols={2}>
+  <Card title="AIAgent" icon="robot">
+    The main abstraction for interacting with AI models. Created from a chat client with instructions and optional tools.
+  </Card>
+  <Card title="ChatClient" icon="message">
+    The underlying client that communicates with AI providers (Azure OpenAI, OpenAI, etc.).
+  </Card>
+  <Card title="AgentSession" icon="history">
+    Manages conversation state and history for multi-turn interactions.
+  </Card>
+  <Card title="Tools" icon="wrench">
+    Functions that agents can call to perform actions or retrieve information.
+  </Card>
+</CardGroup>
+
+## Your First Agent
+
+Let's create a simple agent that can respond to questions:
+
+<Steps>
+
+<Step title="Import required namespaces">
+  ```csharp
+  using Azure.AI.OpenAI;
+  using Azure.Identity;
+  using Microsoft.Agents.AI;
+  using OpenAI.Chat;
+  ```
+</Step>
+
+<Step title="Configure the connection">
+  ```csharp
+  var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+      ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+  var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+  ```
+</Step>
+
+<Step title="Create the agent">
+  ```csharp
+  AIAgent agent = new AzureOpenAIClient(
+      new Uri(endpoint),
+      new DefaultAzureCredential())
+      .GetChatClient(deploymentName)
+      .AsAIAgent(
+          instructions: "You are a helpful assistant that provides clear, concise answers.",
+          name: "Assistant");
+  ```
+</Step>
+
+<Step title="Run the agent">
+  ```csharp
+  string response = await agent.RunAsync("What is the Microsoft Agent Framework?");
+  Console.WriteLine(response);
+  ```
+</Step>
+
+</Steps>
+
+### Complete Example
+
+Here's the complete working example:
+
+```csharp Program.cs
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using OpenAI.Chat;
+
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+AIAgent agent = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new DefaultAzureCredential())
+    .GetChatClient(deploymentName)
+    .AsAIAgent(
+        instructions: "You are a helpful assistant that provides clear, concise answers.",
+        name: "Assistant");
+
+string response = await agent.RunAsync("What is the Microsoft Agent Framework?");
+Console.WriteLine(response);
+```
+
+## Streaming Responses
+
+For real-time feedback, use streaming to receive responses as they're generated:
+
+```csharp
+await foreach (var update in agent.RunStreamingAsync("Tell me about AI agents."))
+{
+    Console.Write(update);
+}
+Console.WriteLine();
+```
+
+<Note>
+  Streaming is ideal for user-facing applications where you want to show progress in real-time.
+</Note>
+
+## Multi-Turn Conversations
+
+Use `AgentSession` to maintain conversation context across multiple interactions:
+
+```csharp
+// Create a session to preserve conversation history
+AgentSession session = await agent.CreateSessionAsync();
+
+// First turn
+Console.WriteLine(await agent.RunAsync("My name is Alice.", session));
+
+// Second turn - the agent remembers the context
+Console.WriteLine(await agent.RunAsync("What's my name?", session));
+```
+
+### How It Works
+
+1. **CreateSessionAsync()** initializes a new conversation session
+2. Pass the `session` object to subsequent `RunAsync()` calls
+3. The session automatically maintains the conversation history
+4. The agent has full context from previous messages
+
+## Adding Tools (Functions)
+
+Agents become more powerful when they can call functions:
+
+<Steps>
+
+<Step title="Define a function with Description attributes">
+  ```csharp
+  using System.ComponentModel;
+
+  [Description("Get the current weather for a location.")]
+  static string GetWeather(
+      [Description("The city name")] string location)
+  {
+      return $"The weather in {location} is sunny with a high of 22°C.";
+  }
+  ```
+</Step>
+
+<Step title="Create an agent with tools">
+  ```csharp
+  using Microsoft.Extensions.AI;
+
+  AIAgent agent = new AzureOpenAIClient(
+      new Uri(endpoint),
+      new DefaultAzureCredential())
+      .GetChatClient(deploymentName)
+      .AsAIAgent(
+          instructions: "You are a helpful weather assistant.",
+          tools: [AIFunctionFactory.Create(GetWeather)]);
+  ```
+</Step>
+
+<Step title="Run the agent">
+  ```csharp
+  Console.WriteLine(await agent.RunAsync("What's the weather in Seattle?"));
+  ```
+  
+  The agent will automatically call your `GetWeather` function and incorporate the result into its response.
+</Step>
+
+</Steps>
+
+### Complete Tool Example
+
+```csharp Program.cs
+using System.ComponentModel;
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using OpenAI.Chat;
+
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+[Description("Get the weather for a given location.")]
+static string GetWeather([Description("The location to get the weather for.")] string location)
+    => $"The weather in {location} is cloudy with a high of 15°C.";
+
+AIAgent agent = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new DefaultAzureCredential())
+    .GetChatClient(deploymentName)
+    .AsAIAgent(
+        instructions: "You are a helpful assistant",
+        tools: [AIFunctionFactory.Create(GetWeather)]);
+
+Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?"));
+```
+
+## Key Patterns
+
+### Async/Await
+
+All agent interactions are asynchronous:
+
+```csharp
+// Single response
+string response = await agent.RunAsync("Hello");
+
+// Streaming
+await foreach (var chunk in agent.RunStreamingAsync("Hello"))
+{
+    Console.Write(chunk);
+}
+
+// Create session
+AgentSession session = await agent.CreateSessionAsync();
+```
+
+### Extension Methods
+
+The SDK uses extension methods for clean API design:
+
+```csharp
+// .AsAIAgent() converts IChatClient to AIAgent
+AIAgent agent = chatClient.AsAIAgent(
+    instructions: "You are helpful.",
+    name: "MyAgent",
+    tools: [...]);
+```
+
+### Dependency Injection
+
+The framework integrates with Microsoft.Extensions.DependencyInjection:
+
+```csharp
+services.AddSingleton<AIAgent>(sp =>
+{
+    var chatClient = new AzureOpenAIClient(
+        new Uri(endpoint),
+        new DefaultAzureCredential())
+        .GetChatClient(deploymentName);
+    
+    return chatClient.AsAIAgent(
+        instructions: "You are helpful.",
+        name: "MyAgent");
+});
+```
+
+## Common Patterns
+
+<AccordionGroup>
+
+<Accordion title="Reading configuration from environment variables">
+  ```csharp
+  var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+      ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+  var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+  ```
+</Accordion>
+
+<Accordion title="Error handling">
+  ```csharp
+  try
+  {
+      var response = await agent.RunAsync("Hello");
+      Console.WriteLine(response);
+  }
+  catch (InvalidOperationException ex)
+  {
+      Console.WriteLine($"Configuration error: {ex.Message}");
+  }
+  catch (Exception ex)
+  {
+      Console.WriteLine($"Error: {ex.Message}");
+  }
+  ```
+</Accordion>
+
+<Accordion title="Using cancellation tokens">
+  ```csharp
+  using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+  
+  var response = await agent.RunAsync(
+      "Write a long story",
+      cancellationToken: cts.Token);
+  ```
+</Accordion>
+
+</AccordionGroup>
+
+## Example Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Customer Support Bot" icon="headset">
+    Build agents that answer customer questions and route to human agents when needed.
+  </Card>
+  <Card title="Data Analysis Assistant" icon="chart-line">
+    Create agents that query databases and generate insights from data.
+  </Card>
+  <Card title="Code Assistant" icon="code">
+    Develop agents that help with coding tasks, explain code, and suggest improvements.
+  </Card>
+  <Card title="Workflow Automation" icon="gears">
+    Orchestrate complex multi-step workflows with agent coordination.
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+Now that you understand the basics:
+
+<CardGroup cols={2}>
+  <Card title="Create Your First Agent" icon="rocket" href="/dotnet/first-agent">
+    Build a complete agent with advanced features
+  </Card>
+  <Card title="Working with Tools" icon="wrench" href="/dotnet/tools">
+    Learn how to create and use agent tools
+  </Card>
+  <Card title="Agent Sessions" icon="history" href="/dotnet/sessions">
+    Master multi-turn conversations and context management
+  </Card>
+  <Card title="Browse Examples" icon="code" href="/dotnet/examples">
+    Explore sample code and patterns
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<Warning>
+  **Security**: Never hardcode API keys or secrets. Always use environment variables or Azure Key Vault.
+</Warning>
+
+<Note>
+  **Production Credentials**: Use `ManagedIdentityCredential` instead of `DefaultAzureCredential` in production to avoid latency from credential probing.
+</Note>
+
+<Note>
+  **Async All The Way**: Always use async/await patterns. Never use `.Result` or `.Wait()` as it can cause deadlocks.
+</Note>
+
+<Note>
+  **Dispose Sessions**: If you create many sessions, consider disposing them when done to free resources.
+</Note>

@@ -1,0 +1,222 @@
+---
+title: "Installation"
+description: "Install the Microsoft Agent Framework .NET SDK and set up your development environment"
+---
+
+## Prerequisites
+
+Before installing the Microsoft Agent Framework .NET SDK, ensure you have:
+
+- **.NET 8.0 or later** installed on your machine
+- An **Azure OpenAI** resource or other supported AI provider
+- **Azure CLI** (for authentication)
+
+## Install the SDK
+
+The Microsoft Agent Framework is distributed as NuGet packages. Install the core package using the .NET CLI:
+
+```bash
+dotnet add package Microsoft.Agents.AI
+```
+
+### Additional Packages
+
+Depending on your provider and features, you may need additional packages:
+
+<CodeGroup>
+
+```bash Azure OpenAI
+dotnet add package Microsoft.Agents.AI.OpenAI
+dotnet add package Azure.AI.OpenAI
+dotnet add package Azure.Identity
+```
+
+```bash Microsoft.Extensions.AI
+dotnet add package Microsoft.Extensions.AI
+dotnet add package Microsoft.Extensions.AI.OpenAI
+```
+
+```bash Other Providers
+# Anthropic
+dotnet add package Anthropic
+
+# Google Gemini
+dotnet add package Google.GenAI
+
+# Ollama
+dotnet add package OllamaSharp
+```
+
+</CodeGroup>
+
+## Set Up Authentication
+
+### Azure Authentication
+
+The SDK uses `DefaultAzureCredential` from Azure.Identity for authentication. This supports multiple authentication methods:
+
+<Steps>
+
+<Step title="Install Azure CLI">
+  Download and install the [Azure CLI](https://docs.microsoft.com/cli/azure/install-azure-cli).
+</Step>
+
+<Step title="Sign in to Azure">
+  ```bash
+  az login
+  ```
+  
+  This will open a browser window for authentication.
+</Step>
+
+<Step title="Set your Azure subscription (if needed)">
+  ```bash
+  az account set --subscription "YOUR_SUBSCRIPTION_ID"
+  ```
+</Step>
+
+</Steps>
+
+<Note>
+  `DefaultAzureCredential` is convenient for development but requires careful consideration in production. Consider using `ManagedIdentityCredential` or other specific credentials in production environments.
+</Note>
+
+## Configure Environment Variables
+
+Set up the required environment variables for your Azure OpenAI resource:
+
+<CodeGroup>
+
+```bash Linux/macOS
+export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
+export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
+```
+
+```powershell Windows PowerShell
+$env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
+```
+
+```cmd Windows Command Prompt
+set AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+set AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini
+```
+
+</CodeGroup>
+
+### Environment Variable Reference
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `AZURE_OPENAI_ENDPOINT` | Your Azure OpenAI endpoint URL | Yes |
+| `AZURE_OPENAI_DEPLOYMENT_NAME` | Model deployment name (e.g., gpt-4o-mini, gpt-4) | No (defaults to gpt-4o-mini) |
+
+## Create a New Project
+
+Create a new .NET console application to start building agents:
+
+<Steps>
+
+<Step title="Create a new project">
+  ```bash
+  dotnet new console -n MyFirstAgent
+  cd MyFirstAgent
+  ```
+</Step>
+
+<Step title="Install the required packages">
+  ```bash
+  dotnet add package Microsoft.Agents.AI
+  dotnet add package Azure.AI.OpenAI
+  dotnet add package Azure.Identity
+  dotnet add package Microsoft.Extensions.AI.OpenAI
+  ```
+</Step>
+
+<Step title="Verify the installation">
+  ```bash
+  dotnet build
+  ```
+  
+  You should see a successful build output.
+</Step>
+
+</Steps>
+
+## Verify Your Setup
+
+Create a simple test to verify your installation:
+
+```csharp Program.cs
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using OpenAI.Chat;
+
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+AIAgent agent = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new DefaultAzureCredential())
+    .GetChatClient(deploymentName)
+    .AsAIAgent(instructions: "You are a helpful assistant.", name: "TestAgent");
+
+Console.WriteLine(await agent.RunAsync("Hello! Are you working?"));
+```
+
+Run the application:
+
+```bash
+dotnet run
+```
+
+If everything is configured correctly, you should see a response from your agent.
+
+## Troubleshooting
+
+<AccordionGroup>
+
+<Accordion title="Authentication errors">
+  **Error**: `Azure.Identity.AuthenticationFailedException`
+  
+  **Solution**: Ensure you're logged in with `az login` and have the correct permissions for your Azure OpenAI resource.
+</Accordion>
+
+<Accordion title="Missing environment variables">
+  **Error**: `AZURE_OPENAI_ENDPOINT is not set`
+  
+  **Solution**: Set the required environment variables as shown in the [Configure Environment Variables](#configure-environment-variables) section.
+</Accordion>
+
+<Accordion title="Package version conflicts">
+  **Error**: Package dependency conflicts
+  
+  **Solution**: Ensure you're using compatible versions. The SDK requires .NET 8.0 or later and Microsoft.Extensions.AI 10.3.0 or later.
+</Accordion>
+
+<Accordion title="Deployment not found">
+  **Error**: `The API deployment for this resource does not exist`
+  
+  **Solution**: Verify your `AZURE_OPENAI_DEPLOYMENT_NAME` matches a deployment in your Azure OpenAI resource.
+</Accordion>
+
+</AccordionGroup>
+
+<Warning>
+  Never commit API keys or secrets to source control. Always use environment variables or Azure Key Vault for sensitive configuration.
+</Warning>
+
+## Next Steps
+
+Now that you have the SDK installed and configured:
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/dotnet/quickstart">
+    Learn the core concepts and build your first agent
+  </Card>
+  <Card title="Create Your First Agent" icon="robot" href="/dotnet/first-agent">
+    Build a complete agent with tools and streaming
+  </Card>
+</CardGroup>

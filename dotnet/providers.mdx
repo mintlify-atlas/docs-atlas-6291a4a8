@@ -1,0 +1,589 @@
+---
+title: 'AI Providers'
+description: 'Connect to different AI providers in the .NET SDK'
+---
+
+## Overview
+
+The Microsoft Agent Framework .NET SDK supports multiple AI providers through the `IChatClient` interface from `Microsoft.Extensions.AI`. This unified interface allows you to switch between providers with minimal code changes.
+
+## Supported Providers
+
+The framework supports:
+
+- **Azure OpenAI**: Microsoft's enterprise-grade OpenAI service
+- **OpenAI**: Direct OpenAI API access
+- **Anthropic**: Claude models (via Anthropic API or Azure AI Foundry)
+- **Google Gemini**: Google's Gemini models
+- **Ollama**: Local open-source models
+- **ONNX Runtime**: Local inference with ONNX models
+- **GitHub Copilot**: GitHub's Copilot models
+- **Azure AI Foundry**: Multi-model access through Azure AI
+- **Custom**: Build your own provider
+
+## Azure OpenAI
+
+The recommended provider for enterprise applications.
+
+### Using DefaultAzureCredential
+
+```csharp
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using OpenAI.Chat;
+
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+// Use Azure AD authentication
+AIAgent agent = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new DefaultAzureCredential())
+    .GetChatClient(deploymentName)
+    .AsAIAgent(
+        instructions: "You are a helpful assistant.",
+        name: "Assistant");
+
+var response = await agent.RunAsync("Hello!");
+Console.WriteLine(response.Text);
+```
+
+<Warning>
+  `DefaultAzureCredential` is convenient for development but requires careful consideration in production. Use `ManagedIdentityCredential` or another specific credential to avoid latency and security risks.
+</Warning>
+
+### Using API Key
+
+```csharp
+using Azure.AI.OpenAI;
+using Microsoft.Agents.AI;
+using OpenAI.Chat;
+
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT");
+var apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY");
+var deploymentName = "gpt-4o-mini";
+
+AIAgent agent = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new System.ClientModel.ApiKeyCredential(apiKey))
+    .GetChatClient(deploymentName)
+    .AsAIAgent(
+        instructions: "You are a helpful assistant.");
+```
+
+### Configuration
+
+Set these environment variables:
+
+```bash
+export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com"
+export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
+# For Azure AD auth, authenticate with: az login
+# Or for API key:
+export AZURE_OPENAI_API_KEY="your-api-key"
+```
+
+## OpenAI
+
+Direct access to OpenAI's API.
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using OpenAI;
+using OpenAI.Chat;
+
+var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+var model = Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL_NAME") ?? "gpt-4o-mini";
+
+AIAgent agent = new OpenAIClient(apiKey)
+    .GetChatClient(model)
+    .AsAIAgent(
+        instructions: "You are a helpful assistant.",
+        name: "Assistant");
+
+var response = await agent.RunAsync("Tell me a joke.");
+Console.WriteLine(response.Text);
+```
+
+### Configuration
+
+```bash
+export OPENAI_API_KEY="sk-..."
+export OPENAI_CHAT_MODEL_NAME="gpt-4o-mini"
+```
+
+## Anthropic
+
+### Via Anthropic API
+
+```csharp
+using Anthropic;
+using Microsoft.Agents.AI;
+
+var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
+var model = Environment.GetEnvironmentVariable("ANTHROPIC_CHAT_MODEL_NAME") ?? "claude-haiku-4-5";
+
+using var client = new AnthropicClient() { ApiKey = apiKey };
+
+AIAgent agent = client.AsAIAgent(
+    model: model,
+    instructions: "You are a helpful assistant.",
+    name: "Assistant");
+
+var response = await agent.RunAsync("Explain quantum computing.");
+Console.WriteLine(response.Text);
+```
+
+### Via Azure AI Foundry
+
+```csharp
+using Anthropic.Foundry;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+
+var resource = Environment.GetEnvironmentVariable("ANTHROPIC_RESOURCE");
+var model = "claude-haiku-4-5";
+
+// With Azure AD
+using var client = new AnthropicFoundryClient(
+    new AnthropicFoundryIdentityTokenCredentials(
+        new DefaultAzureCredential(),
+        resource,
+        ["https://ai.azure.com/.default"]));
+
+AIAgent agent = client.AsAIAgent(
+    model: model,
+    instructions: "You are a helpful assistant.");
+```
+
+### Configuration
+
+```bash
+# Direct Anthropic API
+export ANTHROPIC_API_KEY="sk-ant-..."
+export ANTHROPIC_CHAT_MODEL_NAME="claude-haiku-4-5"
+
+# Via Azure AI Foundry
+export ANTHROPIC_RESOURCE="your-resource-name"
+```
+
+## Google Gemini
+
+### Using Google GenAI Client
+
+```csharp
+using Google.GenAI;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+var apiKey = Environment.GetEnvironmentVariable("GOOGLE_GENAI_API_KEY");
+var model = Environment.GetEnvironmentVariable("GOOGLE_GENAI_MODEL") ?? "gemini-2.5-flash";
+
+var client = new Client(vertexAI: false, apiKey: apiKey);
+
+var agent = new ChatClientAgent(
+    client.AsIChatClient(model),
+    name: "Assistant",
+    instructions: "You are a helpful assistant.");
+
+var response = await agent.RunAsync("What is machine learning?");
+Console.WriteLine(response.Text);
+```
+
+### Using Community Package
+
+```csharp
+using Microsoft.Agents.AI;
+using Mscc.GenerativeAI.Microsoft;
+
+var apiKey = Environment.GetEnvironmentVariable("GOOGLE_GENAI_API_KEY");
+var model = "gemini-2.5-flash";
+
+var agent = new ChatClientAgent(
+    new GeminiChatClient(apiKey: apiKey, model: model),
+    name: "Assistant",
+    instructions: "You are a helpful assistant.");
+```
+
+### Configuration
+
+```bash
+export GOOGLE_GENAI_API_KEY="..."
+export GOOGLE_GENAI_MODEL="gemini-2.5-flash"
+```
+
+## Ollama
+
+Run open-source models locally.
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using OllamaSharp;
+
+var endpoint = Environment.GetEnvironmentVariable("OLLAMA_ENDPOINT") ?? "http://localhost:11434";
+var model = Environment.GetEnvironmentVariable("OLLAMA_MODEL_NAME") ?? "llama3.2";
+
+AIAgent agent = new OllamaApiClient(new Uri(endpoint), model)
+    .AsAIAgent(
+        instructions: "You are a helpful assistant.",
+        name: "LocalAssistant");
+
+var response = await agent.RunAsync("Hello!");
+Console.WriteLine(response.Text);
+```
+
+### Setup Ollama
+
+1. Install Ollama: https://ollama.ai/
+2. Pull a model: `ollama pull llama3.2`
+3. Start server: `ollama serve`
+
+### Configuration
+
+```bash
+export OLLAMA_ENDPOINT="http://localhost:11434"
+export OLLAMA_MODEL_NAME="llama3.2"
+```
+
+## ONNX Runtime
+
+Local inference with ONNX models.
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using Microsoft.ML.OnnxRuntimeGenAI;
+
+var modelPath = Environment.GetEnvironmentVariable("ONNX_MODEL_PATH");
+
+using var model = new Model(modelPath);
+var chatClient = new OnnxRuntimeGenAIChatClient(model);
+
+var agent = new ChatClientAgent(
+    chatClient,
+    name: "LocalAgent",
+    instructions: "You are a helpful assistant.");
+
+var response = await agent.RunAsync("What is AI?");
+Console.WriteLine(response.Text);
+```
+
+### Configuration
+
+```bash
+export ONNX_MODEL_PATH="/path/to/model"
+```
+
+## GitHub Copilot
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.GitHub.Copilot;
+
+var token = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
+var model = "gpt-4o";
+
+var chatClient = new GitHubCopilotChatClient(
+    token: token,
+    model: model);
+
+var agent = new ChatClientAgent(
+    chatClient,
+    name: "CopilotAgent",
+    instructions: "You are a coding assistant.");
+
+var response = await agent.RunAsync(
+    "Write a function to calculate factorial.");
+Console.WriteLine(response.Text);
+```
+
+### Configuration
+
+```bash
+export GITHUB_TOKEN="ghp_..."
+```
+
+## Azure AI Foundry
+
+Access multiple models through Azure AI.
+
+### Using Azure AI Project
+
+```csharp
+using Azure.AI.Projects;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+
+var connectionString = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_CONNECTION_STRING");
+
+var projectClient = new AIProjectClient(
+    connectionString,
+    new DefaultAzureCredential());
+
+var agent = projectClient.GetAgentsClient().AsAIAgent(
+    instructions: "You are a helpful assistant.");
+
+var response = await agent.RunAsync("Hello!");
+```
+
+### Using Foundry Model
+
+```csharp
+using Azure.AI.Inference;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+
+var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_ENDPOINT");
+var model = "gpt-4o";
+
+var client = new ChatCompletionsClient(
+    new Uri(endpoint),
+    new DefaultAzureCredential());
+
+var chatClient = client.AsIChatClient(model);
+
+var agent = new ChatClientAgent(
+    chatClient,
+    name: "FoundryAgent",
+    instructions: "You are a helpful assistant.");
+```
+
+### Configuration
+
+```bash
+export AZURE_AI_PROJECT_CONNECTION_STRING="..."
+# or
+export AZURE_FOUNDRY_ENDPOINT="https://your-foundry.azure.com"
+```
+
+## Custom Provider
+
+Implement `IChatClient` for custom providers:
+
+```csharp
+using Microsoft.Extensions.AI;
+using System.Runtime.CompilerServices;
+
+public class CustomChatClient : IChatClient
+{
+    public ChatClientMetadata Metadata { get; } = new(
+        providerName: "CustomProvider",
+        modelId: "custom-model-v1");
+    
+    public async Task<ChatResponse> GetResponseAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        // Call your custom AI service
+        var result = await CallCustomAIServiceAsync(
+            messages,
+            cancellationToken);
+        
+        return new ChatResponse(
+            [new ChatMessage(ChatRole.Assistant, result)]);
+    }
+    
+    public async IAsyncEnumerable<StreamingChatResponseUpdate> GetStreamingResponseAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (var chunk in StreamCustomAIServiceAsync(
+            messages,
+            cancellationToken))
+        {
+            yield return new StreamingChatResponseUpdate
+            {
+                Text = chunk
+            };
+        }
+    }
+    
+    private async Task<string> CallCustomAIServiceAsync(
+        IEnumerable<ChatMessage> messages,
+        CancellationToken cancellationToken)
+    {
+        // Your implementation
+        await Task.Delay(100, cancellationToken);
+        return "Response from custom AI service";
+    }
+    
+    private async IAsyncEnumerable<string> StreamCustomAIServiceAsync(
+        IEnumerable<ChatMessage> messages,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        // Your implementation
+        yield return "Chunk ";
+        await Task.Delay(50, cancellationToken);
+        yield return "by ";
+        await Task.Delay(50, cancellationToken);
+        yield return "chunk";
+    }
+    
+    public void Dispose() { }
+    
+    public object? GetService(Type serviceType, object? serviceKey = null)
+        => serviceType.IsInstanceOfType(this) ? this : null;
+}
+
+// Use custom client
+var customClient = new CustomChatClient();
+var agent = new ChatClientAgent(
+    customClient,
+    name: "CustomAgent",
+    instructions: "You are a helpful assistant.");
+```
+
+## Provider Comparison
+
+| Provider | Best For | Deployment | Cost |
+|----------|----------|------------|------|
+| **Azure OpenAI** | Enterprise apps, compliance, Azure integration | Cloud (Azure) | Pay per token |
+| **OpenAI** | Rapid prototyping, latest models | Cloud | Pay per token |
+| **Anthropic** | Long context, analysis tasks | Cloud | Pay per token |
+| **Google Gemini** | Multimodal, Google ecosystem | Cloud | Pay per token |
+| **Ollama** | Local development, privacy | Local | Free |
+| **ONNX** | Edge deployment, offline | Local | Free |
+| **GitHub Copilot** | Coding assistance | Cloud | Subscription |
+| **Azure AI Foundry** | Multi-model, experimentation | Cloud (Azure) | Pay per token |
+
+## Switching Providers
+
+The unified interface makes switching providers easy:
+
+```csharp
+// Development: Use Ollama locally
+IChatClient chatClient = new OllamaApiClient(
+    new Uri("http://localhost:11434"),
+    "llama3.2");
+
+// Production: Use Azure OpenAI
+// chatClient = new AzureOpenAIClient(
+//     new Uri(azureEndpoint),
+//     new DefaultAzureCredential())
+//     .GetChatClient(deploymentName);
+
+// Same agent code works with any provider
+AIAgent agent = chatClient.AsAIAgent(
+    instructions: "You are a helpful assistant.",
+    name: "Assistant");
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Environment Variables for Configuration">
+    Never hardcode credentials. Use environment variables:
+    
+    ```csharp
+    var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") 
+        ?? throw new InvalidOperationException("OPENAI_API_KEY not set");
+    ```
+  </Accordion>
+  
+  <Accordion title="Handle Provider-Specific Features Gracefully">
+    Not all providers support all features (e.g., function calling, structured output). Implement fallbacks:
+    
+    ```csharp
+    try
+    {
+        var response = await agent.RunAsync<CityInfo>(query);
+    }
+    catch (NotSupportedException)
+    {
+        // Fallback to text parsing
+        var textResponse = await agent.RunAsync(query);
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Monitor Token Usage">
+    Track token consumption across providers:
+    
+    ```csharp
+    var response = await agent.RunAsync(query);
+    var usage = response.Usage;
+    Console.WriteLine($"Tokens: {usage?.TotalTokenCount}");
+    ```
+  </Accordion>
+  
+  <Accordion title="Use Appropriate Models">
+    Choose models based on task requirements:
+    - Fast/cheap: `gpt-4o-mini`, `claude-haiku`
+    - Balanced: `gpt-4o`, `claude-sonnet`
+    - Advanced: `o1`, `claude-opus`
+  </Accordion>
+  
+  <Accordion title="Consider Latency and Availability">
+    - Cloud providers: Higher latency, always available
+    - Local models: Lower latency, offline capable, limited power
+  </Accordion>
+  
+  <Accordion title="Secure Credentials">
+    For Azure providers, prefer managed identities in production:
+    
+    ```csharp
+    // Production
+    new AzureOpenAIClient(
+        endpoint,
+        new ManagedIdentityCredential());
+    
+    // NOT recommended for production
+    new AzureOpenAIClient(
+        endpoint,
+        new DefaultAzureCredential()); // May probe multiple credential sources
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Provider-Specific Packages
+
+Install the appropriate NuGet package for your provider:
+
+```xml
+<!-- Azure OpenAI -->
+<PackageReference Include="Azure.AI.OpenAI" Version="2.0.0" />
+
+<!-- OpenAI -->
+<PackageReference Include="OpenAI" Version="2.0.0" />
+
+<!-- Anthropic -->
+<PackageReference Include="Anthropic" Version="*" />
+
+<!-- Google Gemini -->
+<PackageReference Include="Google.GenAI" Version="*" />
+<PackageReference Include="Mscc.GenerativeAI.Microsoft" Version="*" />
+
+<!-- Ollama -->
+<PackageReference Include="OllamaSharp" Version="*" />
+
+<!-- ONNX -->
+<PackageReference Include="Microsoft.ML.OnnxRuntimeGenAI" Version="*" />
+
+<!-- GitHub Copilot -->
+<PackageReference Include="Microsoft.Agents.AI.GitHub.Copilot" Version="*" />
+
+<!-- Azure AI Projects -->
+<PackageReference Include="Azure.AI.Projects" Version="*" />
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Agents" icon="robot" href="/dotnet/agents">
+    Build agents with any provider
+  </Card>
+  <Card title="Tools" icon="wrench" href="/dotnet/tools">
+    Add function calling (provider support varies)
+  </Card>
+  <Card title="Observability" icon="chart-line" href="/dotnet/observability">
+    Monitor provider performance
+  </Card>
+  <Card title="RAG" icon="database" href="/dotnet/rag">
+    Combine providers with retrieval
+  </Card>
+</CardGroup>

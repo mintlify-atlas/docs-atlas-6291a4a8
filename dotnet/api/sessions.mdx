@@ -1,0 +1,542 @@
+---
+title: Sessions
+description: API reference for AgentSession and session management in Microsoft Agent Framework .NET SDK
+---
+
+# Sessions API Reference
+
+Session classes for managing conversation state and context.
+
+## AgentSession
+
+Base abstraction for all agent sessions, containing the state of a specific conversation with an agent.
+
+```csharp
+using Microsoft.Agents.AI;
+```
+
+### Overview
+
+An `AgentSession` contains the state of a specific conversation with an agent, which may include:
+- Conversation history or a reference to externally stored conversation history
+- Memories or a reference to externally stored memories
+- Any other state that the agent needs to persist across runs
+
+Sessions may also have behaviors attached that provide:
+- Customized storage of state
+- Data extraction from and injection into conversations
+- Chat history reduction (e.g., message summarization or truncation)
+
+### Properties
+
+<ParamField path="StateBag" type="AgentSessionStateBag" required>
+  Gets any arbitrary state associated with this session. This is a dictionary for storing custom data.
+</ParamField>
+
+### Methods
+
+#### GetService()
+
+Retrieves a service of the specified type from the session.
+
+```csharp
+public virtual object? GetService(
+    Type serviceType,
+    object? serviceKey = null
+)
+
+public TService? GetService<TService>(
+    object? serviceKey = null
+)
+```
+
+<ParamField path="serviceType" type="Type" required>
+  The type of object being requested.
+</ParamField>
+
+<ParamField path="serviceKey" type="object?">
+  An optional key to help identify the target service.
+</ParamField>
+
+<ResponseField name="return" type="object? | TService?">
+  The found object, or null if not available.
+</ResponseField>
+
+### Example: Using StateBag
+
+```csharp
+using Microsoft.Agents.AI;
+
+var agent = chatClient.AsAIAgent(name: "Assistant");
+var session = await agent.CreateSessionAsync();
+
+// Store custom data in the session
+session.StateBag["user_id"] = "user-123";
+session.StateBag["conversation_start"] = DateTime.UtcNow;
+session.StateBag["preferences"] = new { theme = "dark", language = "en" };
+
+// Use the session
+await agent.RunAsync("Hello!", session);
+
+// Retrieve custom data
+var userId = session.StateBag["user_id"];
+var startTime = (DateTime)session.StateBag["conversation_start"];
+```
+
+---
+
+## ChatClientAgentSession
+
+Session implementation for use with `ChatClientAgent`.
+
+```csharp
+using Microsoft.Agents.AI;
+```
+
+### Properties
+
+<ParamField path="ConversationId" type="string?">
+  Gets or sets the ID of the underlying service chat history. Used to support cases where chat history is stored by the agent service (server-side).
+</ParamField>
+
+<ParamField path="StateBag" type="AgentSessionStateBag">
+  Inherited from `AgentSession`. Dictionary for storing arbitrary state.
+</ParamField>
+
+### Remarks
+
+The `ConversationId` property may be null in the following cases:
+- The agent stores messages via a `ChatHistoryProvider` and not in the agent service
+- This is a new session and server-managed chat history has not yet been created
+
+The `ConversationId` may change over time when pointing to service-managed chat history, depending on the service's default behavior (e.g., forking history with each iteration).
+
+### Example: Client-Side History (Default)
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+var chatClient = new OpenAIChatClient(
+    model: "gpt-4",
+    apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+);
+
+var agent = chatClient.AsAIAgent(
+    instructions: "You are a helpful assistant.",
+    name: "Assistant"
+);
+
+// Create a session (uses InMemoryChatHistoryProvider by default)
+var session = await agent.CreateSessionAsync();
+
+// ConversationId is null for client-side history
+Console.WriteLine($"Conversation ID: {((ChatClientAgentSession)session).ConversationId ?? "null"}");
+
+// Have a multi-turn conversation
+await agent.RunAsync("My name is Alice.", session);
+await agent.RunAsync("What's my name?", session);
+await agent.RunAsync("Remember: my favorite color is blue.", session);
+await agent.RunAsync("What's my favorite color?", session);
+```
+
+### Example: Server-Side History
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+// Some chat clients support server-side conversation storage
+var chatClient = new AzureAIChatClient(
+    endpoint: new Uri("https://your-endpoint.azure.com"),
+    credential: new DefaultAzureCredential()
+);
+
+var agent = chatClient.AsAIAgent(name: "Assistant");
+
+// Create a new session
+var session = (ChatClientAgentSession)await agent.CreateSessionAsync();
+
+// First message
+await agent.RunAsync("My name is Bob.", session);
+
+// ConversationId is now set by the service
+Console.WriteLine($"Conversation ID: {session.ConversationId}");
+var conversationId = session.ConversationId!;
+
+// Later: continue the conversation using the conversation ID
+var continueSession = (ChatClientAgentSession)await agent.CreateSessionAsync(conversationId);
+await agent.RunAsync("What's my name?", continueSession);
+// Should respond with "Bob"
+```
+
+### Example: Session Serialization and Persistence
+
+```csharp
+using Microsoft.Agents.AI;
+using System.Text.Json;
+
+var agent = chatClient.AsAIAgent(name: "Assistant");
+var session = await agent.CreateSessionAsync();
+
+// Store custom state
+session.StateBag["user_id"] = "user-456";
+session.StateBag["session_start"] = DateTime.UtcNow;
+
+// Have a conversation
+await agent.RunAsync("Remember: my birthday is January 15th.", session);
+
+// Serialize the session
+var serializedState = await agent.SerializeSessionAsync(session);
+var json = JsonSerializer.Serialize(serializedState);
+
+// Save to storage (database, Redis, file, etc.)
+await File.WriteAllTextAsync("session.json", json);
+
+// Later: load the session
+var loadedJson = await File.ReadAllTextAsync("session.json");
+var loadedState = JsonSerializer.Deserialize<JsonElement>(loadedJson);
+var restoredSession = await agent.DeserializeSessionAsync(loadedState);
+
+// Verify state was restored
+var userId = restoredSession.StateBag["user_id"];
+Console.WriteLine($"Restored session for user: {userId}");
+
+// Continue the conversation
+var response = await agent.RunAsync("When is my birthday?", restoredSession);
+Console.WriteLine(response.Text); // Should say January 15th
+```
+
+---
+
+## AgentSessionStateBag
+
+A dictionary for storing arbitrary state in a session.
+
+```csharp
+using Microsoft.Agents.AI;
+```
+
+### Overview
+
+`AgentSessionStateBag` is a dictionary-like container for storing custom data in a session. It's used by context providers, chat history providers, and application code to maintain state across agent runs.
+
+### Example: Using StateBag for User Preferences
+
+```csharp
+using Microsoft.Agents.AI;
+
+public record UserPreferences(string Theme, string Language, int MaxResults);
+
+var agent = chatClient.AsAIAgent(name: "Assistant");
+var session = await agent.CreateSessionAsync();
+
+// Store user preferences
+var preferences = new UserPreferences(
+    Theme: "dark",
+    Language: "en-US",
+    MaxResults: 10
+);
+session.StateBag["preferences"] = preferences;
+
+// Later: retrieve preferences
+if (session.StateBag.TryGetValue("preferences", out var prefsObj) &&
+    prefsObj is UserPreferences prefs)
+{
+    Console.WriteLine($"User prefers {prefs.Theme} theme");
+}
+```
+
+---
+
+## ChatHistoryProvider
+
+Provides chat history management for cases where history is not stored by the agent service.
+
+```csharp
+using Microsoft.Agents.AI;
+```
+
+### Overview
+
+`ChatHistoryProvider` is an abstract base class for implementing custom chat history storage. The framework includes `InMemoryChatHistoryProvider` as a default implementation.
+
+### Built-in Implementation: InMemoryChatHistoryProvider
+
+```csharp
+using Microsoft.Agents.AI;
+
+var options = new ChatClientAgentOptions
+{
+    Name = "Assistant",
+    ChatHistoryProvider = new InMemoryChatHistoryProvider()
+};
+
+var agent = new ChatClientAgent(chatClient, options);
+
+// History is stored in memory within the session
+var session = await agent.CreateSessionAsync();
+await agent.RunAsync("Hello!", session);
+await agent.RunAsync("How are you?", session);
+```
+
+### Example: Custom Chat History Provider (Redis)
+
+```csharp
+using Microsoft.Agents.AI;
+using StackExchange.Redis;
+
+public class RedisChatHistoryProvider : ChatHistoryProvider
+{
+    private readonly IDatabase _redis;
+    private const string StateKey = "RedisChatHistory";
+
+    public RedisChatHistoryProvider(IDatabase redis)
+    {
+        _redis = redis;
+    }
+
+    public override IEnumerable<string> StateKeys => new[] { StateKey };
+
+    protected override async ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(
+        InvokingContext context,
+        CancellationToken cancellationToken)
+    {
+        var sessionId = GetSessionId(context.Session);
+        
+        // Load history from Redis
+        var historyJson = await _redis.StringGetAsync(sessionId);
+        var history = historyJson.HasValue
+            ? JsonSerializer.Deserialize<List<ChatMessage>>(historyJson!)
+            : new List<ChatMessage>();
+
+        // Add new input messages
+        history.AddRange(context.InputMessages);
+        
+        return history;
+    }
+
+    protected override async ValueTask InvokedCoreAsync(
+        InvokedContext context,
+        CancellationToken cancellationToken)
+    {
+        if (context.Exception != null)
+            return;
+
+        var sessionId = GetSessionId(context.Session);
+        
+        // Load existing history
+        var historyJson = await _redis.StringGetAsync(sessionId);
+        var history = historyJson.HasValue
+            ? JsonSerializer.Deserialize<List<ChatMessage>>(historyJson!)
+            : new List<ChatMessage>();
+
+        // Add new messages
+        history.AddRange(context.InputMessages);
+        history.AddRange(context.ResponseMessages);
+        
+        // Save to Redis
+        var json = JsonSerializer.Serialize(history);
+        await _redis.StringSetAsync(sessionId, json, TimeSpan.FromDays(30));
+    }
+
+    private string GetSessionId(AgentSession session)
+    {
+        // Use StateBag to store/retrieve session ID
+        if (!session.StateBag.TryGetValue("redis_session_id", out var id))
+        {
+            id = Guid.NewGuid().ToString();
+            session.StateBag["redis_session_id"] = id;
+        }
+        return (string)id;
+    }
+}
+
+// Use the Redis history provider
+var redis = ConnectionMultiplexer.Connect("localhost").GetDatabase();
+
+var options = new ChatClientAgentOptions
+{
+    Name = "Assistant",
+    ChatHistoryProvider = new RedisChatHistoryProvider(redis)
+};
+
+var agent = new ChatClientAgent(chatClient, options);
+var session = await agent.CreateSessionAsync();
+
+await agent.RunAsync("My name is Charlie.", session);
+await agent.RunAsync("What's my name?", session);
+```
+
+---
+
+## AIContextProvider
+
+Provides additional context to agents during invocation.
+
+```csharp
+using Microsoft.Agents.AI;
+```
+
+### Overview
+
+`AIContextProvider` is an abstract base class for implementing providers that inject additional context (messages, tools, instructions) into agent runs. Common uses include RAG (Retrieval Augmented Generation), dynamic tool selection, and context-aware instructions.
+
+### Example: Simple RAG Context Provider
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+public class SimpleRagContextProvider : AIContextProvider
+{
+    private readonly Dictionary<string, string> _knowledgeBase;
+
+    public SimpleRagContextProvider()
+    {
+        _knowledgeBase = new Dictionary<string, string>
+        {
+            ["product_x"] = "Product X is a cloud-based solution for data analytics.",
+            ["product_y"] = "Product Y is an on-premises CRM system.",
+            ["pricing"] = "Standard pricing starts at $99/month per user."
+        };
+    }
+
+    public override IEnumerable<string> StateKeys => Array.Empty<string>();
+
+    protected override ValueTask<AIContext> InvokingCoreAsync(
+        InvokingContext context,
+        CancellationToken cancellationToken)
+    {
+        var userMessage = context.Context.Messages?.LastOrDefault(m => m.Role == ChatRole.User);
+        if (userMessage == null)
+            return new(context.Context);
+
+        var userText = userMessage.Text.ToLowerInvariant();
+        
+        // Find relevant knowledge
+        var relevantDocs = _knowledgeBase
+            .Where(kvp => userText.Contains(kvp.Key))
+            .Select(kvp => kvp.Value)
+            .ToList();
+
+        if (!relevantDocs.Any())
+            return new(context.Context);
+
+        // Inject context as a system message
+        var contextMessage = new ChatMessage(
+            ChatRole.System,
+            $"Relevant information: {string.Join(" ", relevantDocs)}"
+        );
+
+        var messages = context.Context.Messages?.ToList() ?? new();
+        messages.Insert(0, contextMessage);
+
+        var newContext = new AIContext
+        {
+            Instructions = context.Context.Instructions,
+            Messages = messages,
+            Tools = context.Context.Tools
+        };
+
+        return new(newContext);
+    }
+}
+
+// Use the RAG provider
+var options = new ChatClientAgentOptions
+{
+    Name = "SalesBot",
+    Instructions = "You are a sales assistant.",
+    AIContextProviders = new[] { new SimpleRagContextProvider() }
+};
+
+var agent = new ChatClientAgent(chatClient, options);
+var response = await agent.RunAsync("Tell me about product_x pricing.");
+Console.WriteLine(response.Text);
+```
+
+### Example: Dynamic Tool Provider
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+public class DynamicToolContextProvider : AIContextProvider
+{
+    private readonly AIFunction _calculatorTool;
+    private readonly AIFunction _weatherTool;
+
+    public DynamicToolContextProvider()
+    {
+        _calculatorTool = AIFunctionFactory.Create(
+            (double a, double b, string op) => op switch
+            {
+                "+" => a + b,
+                "-" => a - b,
+                "*" => a * b,
+                "/" => a / b,
+                _ => 0
+            },
+            name: "calculate",
+            description: "Performs arithmetic"
+        );
+
+        _weatherTool = AIFunctionFactory.Create(
+            (string location) => $"Weather in {location} is sunny.",
+            name: "get_weather",
+            description: "Gets weather"
+        );
+    }
+
+    public override IEnumerable<string> StateKeys => Array.Empty<string>();
+
+    protected override ValueTask<AIContext> InvokingCoreAsync(
+        InvokingContext context,
+        CancellationToken cancellationToken)
+    {
+        var userMessage = context.Context.Messages?.LastOrDefault(m => m.Role == ChatRole.User);
+        if (userMessage == null)
+            return new(context.Context);
+
+        var userText = userMessage.Text.ToLowerInvariant();
+        var tools = context.Context.Tools?.ToList() ?? new();
+
+        // Add tools based on user message
+        if (userText.Contains("calculate") || userText.Contains("math"))
+        {
+            tools.Add(_calculatorTool);
+        }
+
+        if (userText.Contains("weather"))
+        {
+            tools.Add(_weatherTool);
+        }
+
+        var newContext = new AIContext
+        {
+            Instructions = context.Context.Instructions,
+            Messages = context.Context.Messages,
+            Tools = tools
+        };
+
+        return new(newContext);
+    }
+}
+
+// Use the dynamic tool provider
+var options = new ChatClientAgentOptions
+{
+    Name = "SmartAssistant",
+    Instructions = "You are a smart assistant.",
+    AIContextProviders = new[] { new DynamicToolContextProvider() }
+};
+
+var agent = new ChatClientAgent(chatClient, options);
+
+// This will get the calculator tool
+var response1 = await agent.RunAsync("Calculate 5 + 3");
+
+// This will get the weather tool
+var response2 = await agent.RunAsync("What's the weather in Paris?");
+```

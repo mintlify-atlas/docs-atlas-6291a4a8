@@ -1,0 +1,386 @@
+---
+title: Build Your First Agent with Tools
+description: Create an AI agent with custom function tools and learn about tool calling patterns
+---
+
+## Overview
+
+In this guide, you'll build an agent that can use custom tools to perform actions and retrieve information. You'll learn how to:
+
+- Define custom function tools with the `@tool` decorator
+- Add tools to your agent
+- Handle tool calls and responses
+- Use type annotations and Pydantic for parameter validation
+
+<Note>
+This guide builds on the [Quickstart](/python/quickstart). Make sure you've completed it first.
+</Note>
+
+## Understanding Tools
+
+Tools are Python functions that your agent can call to perform specific tasks. The Agent Framework automatically:
+
+- Generates JSON schemas from your function signatures
+- Sends tool definitions to the LLM
+- Executes tool calls when the model requests them
+- Returns tool results back to the model
+
+This enables your agent to interact with external systems, APIs, databases, and more.
+
+## Create a Weather Agent
+
+Let's build an agent that can check the weather for different locations.
+
+<Steps>
+
+<Step title="Import Required Modules">
+
+Create a new file called `weather_agent.py` and import the necessary modules:
+
+```python
+import asyncio
+import os
+from random import randint
+from typing import Annotated
+
+from agent_framework import tool
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+from pydantic import Field
+
+# Load environment variables
+load_dotenv()
+```
+
+</Step>
+
+<Step title="Define a Function Tool">
+
+Create a function and decorate it with `@tool` to make it available to your agent:
+
+```python
+@tool(approval_mode="never_require")
+def get_weather(
+    location: Annotated[str, Field(description="The location to get the weather for.")],
+) -> str:
+    """Get the weather for a given location."""
+    conditions = ["sunny", "cloudy", "rainy", "stormy"]
+    return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
+```
+
+<Warning>
+The `approval_mode="never_require"` setting is used for simplicity in this example. In production, use `approval_mode="always_require"` to require user confirmation before executing tools.
+</Warning>
+
+**Key components:**
+
+- **`@tool` decorator**: Registers the function as a tool
+- **Type annotations**: Define parameter types for validation
+- **`Annotated` with `Field`**: Provides descriptions for the LLM
+- **Docstring**: Explains what the tool does (sent to the LLM)
+- **Return type**: Specifies what the function returns
+
+</Step>
+
+<Step title="Create the Agent with Tools">
+
+Initialize the agent and provide the tool:
+
+```python
+async def main():
+    credential = AzureCliCredential()
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=credential,
+    )
+
+    agent = client.as_agent(
+        name="WeatherAgent",
+        instructions="You are a helpful weather agent. Use the get_weather tool to answer questions.",
+        tools=get_weather,  # Pass the tool to the agent
+    )
+```
+
+<Note>
+You can pass a single tool, a list of tools, or any iterable of tools to the `tools` parameter.
+</Note>
+
+</Step>
+
+<Step title="Run the Agent">
+
+Ask the agent a question that requires using the tool:
+
+```python
+    result = await agent.run("What's the weather like in Seattle?")
+    print(f"Agent: {result}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+</Step>
+
+</Steps>
+
+## Complete Example
+
+```python weather_agent.py
+import asyncio
+import os
+from random import randint
+from typing import Annotated
+
+from agent_framework import tool
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+from pydantic import Field
+
+load_dotenv()
+
+@tool(approval_mode="never_require")
+def get_weather(
+    location: Annotated[str, Field(description="The location to get the weather for.")],
+) -> str:
+    """Get the weather for a given location."""
+    conditions = ["sunny", "cloudy", "rainy", "stormy"]
+    return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
+
+async def main():
+    credential = AzureCliCredential()
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=credential,
+    )
+
+    agent = client.as_agent(
+        name="WeatherAgent",
+        instructions="You are a helpful weather agent. Use the get_weather tool to answer questions.",
+        tools=get_weather,
+    )
+
+    result = await agent.run("What's the weather like in Seattle?")
+    print(f"Agent: {result}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+## Run Your Agent
+
+Execute the script:
+
+```bash
+python weather_agent.py
+```
+
+You should see output like:
+
+```
+Agent: The weather in Seattle is cloudy with a high of 18°C.
+```
+
+## What Just Happened?
+
+Here's the flow of execution:
+
+<Steps>
+
+<Step title="User Query">
+You ask: "What's the weather like in Seattle?"
+</Step>
+
+<Step title="LLM Analysis">
+The model analyzes your question and realizes it needs to call the `get_weather` tool with `location="Seattle"`.
+</Step>
+
+<Step title="Tool Execution">
+The framework automatically calls your `get_weather("Seattle")` function.
+</Step>
+
+<Step title="Tool Response">
+Your function returns: "The weather in Seattle is cloudy with a high of 18°C."
+</Step>
+
+<Step title="Final Response">
+The model receives the tool result and formulates a natural language response.
+</Step>
+
+</Steps>
+
+## Add Multiple Tools
+
+You can provide multiple tools to create more capable agents:
+
+```python
+@tool(approval_mode="never_require")
+def get_weather(
+    location: Annotated[str, Field(description="The location to get the weather for.")],
+) -> str:
+    """Get the weather for a given location."""
+    conditions = ["sunny", "cloudy", "rainy", "stormy"]
+    return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
+
+@tool(approval_mode="never_require")
+def get_menu_specials() -> str:
+    """Get today's menu specials."""
+    return """
+    Special Soup: Clam Chowder
+    Special Salad: Cobb Salad
+    Special Drink: Chai Tea
+    """
+
+# Create agent with multiple tools
+agent = client.as_agent(
+    name="AssistantAgent",
+    instructions="You are a helpful assistant that can provide weather and restaurant information.",
+    tools=[get_weather, get_menu_specials],  # Pass list of tools
+)
+
+# The agent can now use either tool as needed
+result = await agent.run("What's the weather in Amsterdam and what are today's specials?")
+print(result)
+```
+
+## Advanced Tool Patterns
+
+### Complex Parameter Types
+
+Use Pydantic models for structured parameters:
+
+```python
+from pydantic import BaseModel
+
+class Location(BaseModel):
+    city: str
+    country: str
+    units: str = "celsius"  # Default value
+
+@tool(approval_mode="never_require")
+def get_detailed_weather(location: Location) -> str:
+    """Get detailed weather information."""
+    return f"Weather in {location.city}, {location.country}: 20°{location.units[0].upper()}"
+```
+
+### Async Tools
+
+Tools can be async functions for I/O operations:
+
+```python
+import httpx
+
+@tool(approval_mode="never_require")
+async def fetch_weather_api(
+    location: Annotated[str, Field(description="The location to get weather for")],
+) -> str:
+    """Fetch real weather data from an API."""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"https://api.weather.com/v1/location/{location}")
+        return response.json()["current"]["condition"]
+```
+
+### Tool Approval
+
+For production applications, require user approval before executing tools:
+
+```python
+@tool(approval_mode="always_require")
+def delete_file(
+    path: Annotated[str, Field(description="Path to the file to delete")],
+) -> str:
+    """Delete a file from the filesystem."""
+    os.remove(path)
+    return f"Deleted {path}"
+```
+
+When `approval_mode="always_require"`, the framework will pause execution and request user confirmation before calling the tool.
+
+## Best Practices
+
+<AccordionGroup>
+
+<Accordion title="Write Clear Descriptions">
+Provide detailed descriptions for both the function and its parameters. The LLM uses these to decide when and how to call your tools:
+
+```python
+@tool(approval_mode="never_require")
+def search_database(
+    query: Annotated[str, Field(description="The SQL query to execute. Use proper SQL syntax.")],
+    limit: Annotated[int, Field(description="Maximum number of results to return. Default is 10.")] = 10,
+) -> str:
+    """Execute a SQL query against the database and return formatted results."""
+    # Implementation...
+```
+</Accordion>
+
+<Accordion title="Use Type Hints">
+Always use type annotations. They help with:
+- Automatic schema generation
+- Runtime validation
+- IDE autocomplete
+- Better error messages
+
+```python
+# Good
+def get_user(user_id: int) -> dict[str, str]:
+    ...
+
+# Bad
+def get_user(user_id):
+    ...
+```
+</Accordion>
+
+<Accordion title="Handle Errors Gracefully">
+Return error messages as strings rather than raising exceptions:
+
+```python
+@tool(approval_mode="never_require")
+def divide_numbers(a: float, b: float) -> str:
+    """Divide two numbers."""
+    if b == 0:
+        return "Error: Cannot divide by zero"
+    return str(a / b)
+```
+
+This allows the LLM to see the error and potentially retry or inform the user.
+</Accordion>
+
+<Accordion title="Keep Tools Focused">
+Each tool should do one thing well. Instead of a `manage_database` tool that can read, write, and delete, create separate tools:
+
+```python
+@tool(approval_mode="never_require")
+def read_from_database(query: str) -> str:
+    """Read data from the database."""
+    ...
+
+@tool(approval_mode="always_require")
+def write_to_database(query: str) -> str:
+    """Write data to the database. Requires approval."""
+    ...
+```
+</Accordion>
+
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Agent Concepts" icon="brain" href="/python/concepts/agents">
+    Deep dive into agents, middleware, and sessions
+  </Card>
+  <Card title="Tool Patterns" icon="tools" href="/python/concepts/tools">
+    Learn advanced tool patterns and best practices
+  </Card>
+  <Card title="Multi-Agent Systems" icon="users" href="/python/concepts/orchestration">
+    Build systems with multiple collaborating agents
+  </Card>
+  <Card title="API Reference" icon="code" href="/python/api-reference">
+    Explore the complete API documentation
+  </Card>
+</CardGroup>

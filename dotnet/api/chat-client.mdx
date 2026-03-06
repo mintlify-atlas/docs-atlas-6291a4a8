@@ -1,0 +1,453 @@
+---
+title: ChatClientAgent
+description: API reference for ChatClientAgent and IChatClient in Microsoft Agent Framework .NET SDK
+---
+
+# ChatClientAgent API Reference
+
+An `AIAgent` implementation that delegates to an `IChatClient` for chat completion operations.
+
+## ChatClientAgent
+
+Provides an agent that uses an `IChatClient` to send messages to an AI provider and receive responses.
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+```
+
+### Constructor
+
+```csharp
+// Simple constructor with basic parameters
+public ChatClientAgent(
+    IChatClient chatClient,
+    string? instructions = null,
+    string? name = null,
+    string? description = null,
+    IList<AITool>? tools = null,
+    ILoggerFactory? loggerFactory = null,
+    IServiceProvider? services = null
+)
+
+// Constructor with full options
+public ChatClientAgent(
+    IChatClient chatClient,
+    ChatClientAgentOptions? options,
+    ILoggerFactory? loggerFactory = null,
+    IServiceProvider? services = null
+)
+```
+
+<ParamField path="chatClient" type="IChatClient" required>
+  The chat client to use when running the agent.
+</ParamField>
+
+<ParamField path="instructions" type="string?">
+  Optional system instructions that guide the agent's behavior. These are provided to the `IChatClient` with each invocation.
+</ParamField>
+
+<ParamField path="name" type="string?">
+  Optional name for the agent, used for identification and logging.
+</ParamField>
+
+<ParamField path="description" type="string?">
+  Optional human-readable description of the agent's purpose and capabilities.
+</ParamField>
+
+<ParamField path="tools" type="IList<AITool>?">
+  Optional collection of tools that the agent can invoke during conversations. These augment any tools provided via `ChatOptions.Tools`.
+</ParamField>
+
+<ParamField path="loggerFactory" type="ILoggerFactory?">
+  Optional logger factory for creating loggers used by the agent and its components.
+</ParamField>
+
+<ParamField path="services" type="IServiceProvider?">
+  Optional service provider for resolving dependencies required by AI functions and other agent components.
+</ParamField>
+
+<ParamField path="options" type="ChatClientAgentOptions?">
+  Configuration options that control all aspects of the agent's behavior, including chat settings, chat history providers, context providers, and other advanced configurations.
+</ParamField>
+
+### Properties
+
+<ParamField path="ChatClient" type="IChatClient">
+  The underlying chat client used by the agent. May return the original client or a pipeline of decorating `IChatClient` instances.
+</ParamField>
+
+<ParamField path="ChatHistoryProvider" type="ChatHistoryProvider?">
+  The `ChatHistoryProvider` used by this agent for cases where chat history is not stored by the agent service.
+</ParamField>
+
+<ParamField path="AIContextProviders" type="IReadOnlyList<AIContextProvider>?">
+  The list of `AIContextProvider` instances used by this agent for providing additional context during agent runs.
+</ParamField>
+
+<ParamField path="Instructions" type="string?">
+  The system instructions that guide the agent's behavior during conversations.
+</ParamField>
+
+### Methods
+
+#### CreateSessionAsync()
+
+Creates a new conversation session for use with this agent.
+
+```csharp
+// Create a new empty session
+public ValueTask<AgentSession> CreateSessionAsync(
+    CancellationToken cancellationToken = default
+)
+
+// Create a session with an existing conversation ID
+public ValueTask<AgentSession> CreateSessionAsync(
+    string conversationId,
+    CancellationToken cancellationToken = default
+)
+```
+
+<ParamField path="conversationId" type="string">
+  The identifier of an existing conversation to continue. Used for service-backed agents with server-side chat history storage.
+</ParamField>
+
+<ParamField path="cancellationToken" type="CancellationToken" default="default">
+  The cancellation token to monitor for cancellation requests.
+</ParamField>
+
+<ResponseField name="return" type="ValueTask<AgentSession>">
+  A new `AgentSession` (specifically `ChatClientAgentSession`) instance configured for use with this agent.
+</ResponseField>
+
+### Extension Methods
+
+#### AsAIAgent()
+
+Extension method to convert an `IChatClient` into a `ChatClientAgent`.
+
+```csharp
+using Microsoft.Extensions.AI;
+
+// Simple conversion
+public static ChatClientAgent AsAIAgent(
+    this IChatClient chatClient,
+    string? instructions = null,
+    string? name = null,
+    string? description = null,
+    IList<AITool>? tools = null,
+    ILoggerFactory? loggerFactory = null,
+    IServiceProvider? services = null
+)
+
+// With full options
+public static ChatClientAgent AsAIAgent(
+    this IChatClient chatClient,
+    ChatClientAgentOptions? options,
+    ILoggerFactory? loggerFactory = null,
+    IServiceProvider? services = null
+)
+```
+
+### Example: Basic Agent Creation
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+// Create a chat client
+var chatClient = new OpenAIChatClient(
+    model: "gpt-4",
+    apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+);
+
+// Convert to agent
+var agent = chatClient.AsAIAgent(
+    instructions: "You are a helpful assistant that answers questions concisely.",
+    name: "HelpBot",
+    description: "A concise question-answering assistant"
+);
+
+// Use the agent
+var response = await agent.RunAsync("What is the speed of light?");
+Console.WriteLine(response.Text);
+```
+
+### Example: Agent with Tools
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+// Define a tool function
+AIFunction weatherTool = AIFunctionFactory.Create(
+    (string location) => $"The weather in {location} is sunny and 72°F.",
+    name: "get_weather",
+    description: "Gets the current weather for a location"
+);
+
+var chatClient = new OpenAIChatClient(
+    model: "gpt-4",
+    apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+);
+
+var agent = chatClient.AsAIAgent(
+    instructions: "You are a weather assistant. Use the get_weather tool to answer questions.",
+    name: "WeatherBot",
+    tools: new[] { weatherTool }
+);
+
+var response = await agent.RunAsync("What's the weather in Seattle?");
+Console.WriteLine(response.Text);
+```
+
+### Example: Using ChatClientAgentOptions
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+var chatClient = new OpenAIChatClient(
+    model: "gpt-4",
+    apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+);
+
+var options = new ChatClientAgentOptions
+{
+    Name = "ResearchBot",
+    Description = "An AI research assistant",
+    ChatOptions = new ChatOptions
+    {
+        Instructions = "You are a research assistant.",
+        Temperature = 0.7f,
+        MaxOutputTokens = 1000,
+        Tools = new List<AITool> { /* tools here */ }
+    },
+    ChatHistoryProvider = new InMemoryChatHistoryProvider()
+};
+
+var agent = new ChatClientAgent(chatClient, options);
+
+var session = await agent.CreateSessionAsync();
+var response = await agent.RunAsync(
+    "Summarize recent advances in quantum computing.",
+    session
+);
+Console.WriteLine(response.Text);
+```
+
+### Example: Streaming with Tools
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+AIFunction calculatorTool = AIFunctionFactory.Create(
+    (double a, double b, string operation) => operation switch
+    {
+        "+" => a + b,
+        "-" => a - b,
+        "*" => a * b,
+        "/" => a / b,
+        _ => throw new ArgumentException("Invalid operation")
+    },
+    name: "calculate",
+    description: "Performs basic arithmetic operations"
+);
+
+var chatClient = new OpenAIChatClient(
+    model: "gpt-4",
+    apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+);
+
+var agent = chatClient.AsAIAgent(
+    instructions: "You are a math assistant. Use the calculate tool for arithmetic.",
+    tools: new[] { calculatorTool }
+);
+
+await foreach (var update in agent.RunStreamingAsync(
+    "What is 123 multiplied by 456?"
+))
+{
+    Console.Write(update.Text);
+}
+Console.WriteLine();
+```
+
+### Example: Session with Server-Side History
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+// Some chat clients support server-side conversation storage
+var chatClient = new AzureAIChatClient(
+    endpoint: new Uri("https://your-endpoint.azure.com"),
+    credential: new DefaultAzureCredential()
+);
+
+var agent = chatClient.AsAIAgent(
+    name: "Assistant"
+);
+
+// First conversation
+var session = await agent.CreateSessionAsync();
+var response1 = await agent.RunAsync("My favorite color is blue.", session);
+
+Console.WriteLine($"Conversation ID: {((ChatClientAgentSession)session).ConversationId}");
+
+// Later: continue the conversation using the conversation ID
+var conversationId = ((ChatClientAgentSession)session).ConversationId;
+var continueSession = await agent.CreateSessionAsync(conversationId!);
+var response2 = await agent.RunAsync("What's my favorite color?", continueSession);
+Console.WriteLine(response2.Text); // Should say "blue"
+```
+
+---
+
+## IChatClient
+
+The `IChatClient` interface from `Microsoft.Extensions.AI` defines the contract for sending messages to an AI provider.
+
+```csharp
+using Microsoft.Extensions.AI;
+```
+
+### Overview
+
+`IChatClient` is the core abstraction for chat completion operations. It's implemented by provider-specific packages and used by `ChatClientAgent`.
+
+### Methods
+
+#### GetResponseAsync()
+
+Sends a request to get a response from the chat client.
+
+```csharp
+Task<ChatResponse> GetResponseAsync(
+    IList<ChatMessage> messages,
+    ChatOptions? options = null,
+    CancellationToken cancellationToken = default
+)
+```
+
+#### GetStreamingResponseAsync()
+
+Sends a request to get a streaming response from the chat client.
+
+```csharp
+IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+    IList<ChatMessage> messages,
+    ChatOptions? options = null,
+    CancellationToken cancellationToken = default
+)
+```
+
+### Example: Custom IChatClient
+
+```csharp
+using Microsoft.Extensions.AI;
+
+public class CustomChatClient : IChatClient
+{
+    public ChatClientMetadata Metadata { get; } = new ChatClientMetadata("custom-provider");
+
+    public async Task<ChatResponse> GetResponseAsync(
+        IList<ChatMessage> messages,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        // Custom implementation
+        var responseMessage = new ChatMessage(
+            ChatRole.Assistant,
+            "This is a custom response."
+        );
+        
+        return new ChatResponse(new[] { responseMessage });
+    }
+
+    public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+        IList<ChatMessage> messages,
+        ChatOptions? options = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default
+    )
+    {
+        // Custom streaming implementation
+        string[] words = "This is a streaming response.".Split(' ');
+        foreach (var word in words)
+        {
+            yield return new ChatResponseUpdate { Text = word + " " };
+            await Task.Delay(100, cancellationToken);
+        }
+    }
+
+    public object? GetService(Type serviceType, object? serviceKey = null) => null;
+    public void Dispose() { }
+}
+
+// Use the custom client
+var customClient = new CustomChatClient();
+var agent = customClient.AsAIAgent(name: "CustomAgent");
+var response = await agent.RunAsync("Hello!");
+Console.WriteLine(response.Text);
+```
+
+---
+
+## ChatClientBuilder
+
+Extension methods for building agents from `ChatClientBuilder`.
+
+```csharp
+using Microsoft.Extensions.AI;
+```
+
+### BuildAIAgent()
+
+Builds a `ChatClientAgent` from a `ChatClientBuilder` pipeline.
+
+```csharp
+// Simple version
+public static ChatClientAgent BuildAIAgent(
+    this ChatClientBuilder builder,
+    string? instructions = null,
+    string? name = null,
+    string? description = null,
+    IList<AITool>? tools = null,
+    ILoggerFactory? loggerFactory = null,
+    IServiceProvider? services = null
+)
+
+// With options
+public static ChatClientAgent BuildAIAgent(
+    this ChatClientBuilder builder,
+    ChatClientAgentOptions? options,
+    ILoggerFactory? loggerFactory = null,
+    IServiceProvider? services = null
+)
+```
+
+### Example: Building Agent with Middleware Pipeline
+
+```csharp
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
+
+var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+
+var agent = new ChatClientBuilder()
+    .Use(new OpenAIChatClient(
+        model: "gpt-4",
+        apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+    ))
+    .UseLogging(loggerFactory)
+    .UseOpenTelemetry()
+    .BuildAIAgent(
+        instructions: "You are a helpful assistant.",
+        name: "Assistant"
+    );
+
+var response = await agent.RunAsync("Hello!");
+Console.WriteLine(response.Text);
+```

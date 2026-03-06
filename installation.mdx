@@ -1,0 +1,484 @@
+---
+title: "Installation"
+description: "Install and configure Microsoft Agent Framework for Python and .NET"
+---
+
+## Overview
+
+Microsoft Agent Framework is available for both Python and .NET. This guide covers installation, authentication setup, and environment configuration.
+
+## System Requirements
+
+<Tabs>
+  <Tab title="Python">
+    - **Python version**: 3.10 or higher (supports 3.10, 3.11, 3.12, 3.13, 3.14)
+    - **Package manager**: pip or uv
+    - **Operating systems**: Windows, macOS, Linux
+  </Tab>
+  
+  <Tab title=".NET">
+    - **.NET version**: 10.0 or higher
+    - **Operating systems**: Windows, macOS, Linux
+  </Tab>
+</Tabs>
+
+## Install the framework
+
+<Tabs>
+  <Tab title="Python">
+    <Steps>
+      <Step title="Install the core package">
+        ```bash
+        pip install agent-framework --pre
+        ```
+        
+        The `--pre` flag is required during the preview period.
+      </Step>
+      
+      <Step title="Install optional provider packages (optional)">
+        Install additional packages for specific providers:
+        
+        ```bash
+        # Azure AI integrations
+        pip install agent-framework-azure-ai --pre
+        pip install agent-framework-azure-ai-search --pre
+        
+        # Other LLM providers
+        pip install agent-framework-anthropic --pre
+        pip install agent-framework-ollama --pre
+        pip install agent-framework-bedrock --pre
+        
+        # Hosting and protocols
+        pip install agent-framework-azurefunctions --pre
+        pip install agent-framework-a2a --pre
+        
+        # Memory and storage
+        pip install agent-framework-mem0 --pre
+        pip install agent-framework-redis --pre
+        
+        # UI and development tools
+        pip install agent-framework-devui --pre
+        pip install agent-framework-chatkit --pre
+        ```
+      </Step>
+      
+      <Step title="Install all extensions (optional)">
+        To install all available extensions:
+        
+        ```bash
+        pip install agent-framework[all] --pre
+        ```
+      </Step>
+      
+      <Step title="Verify installation">
+        ```bash
+        python -c "import agent_framework; print(agent_framework.__version__)"
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+  
+  <Tab title=".NET">
+    <Steps>
+      <Step title="Create a new project">
+        ```bash
+        dotnet new console -n MyAgentProject
+        cd MyAgentProject
+        ```
+      </Step>
+      
+      <Step title="Install core packages">
+        ```bash
+        dotnet add package Azure.AI.OpenAI
+        dotnet add package Azure.Identity
+        dotnet add package Microsoft.Extensions.AI.OpenAI
+        dotnet add package Microsoft.Agents.AI.OpenAI
+        ```
+      </Step>
+      
+      <Step title="Install optional packages">
+        Add additional packages based on your needs:
+        
+        ```bash
+        # For Azure AI Foundry agents
+        dotnet add package Microsoft.Agents.AI.AzureAI
+        
+        # For Anthropic
+        dotnet add package Microsoft.Agents.AI.Anthropic
+        
+        # For hosting with Azure Functions
+        dotnet add package Microsoft.Agents.AI.AzureFunctions
+        
+        # For Agent-to-Agent protocol
+        dotnet add package Microsoft.Agents.AI.A2A
+        
+        # For memory providers
+        dotnet add package Microsoft.Agents.AI.Mem0
+        ```
+      </Step>
+      
+      <Step title="Verify installation">
+        Add this to your Program.cs:
+        
+        ```csharp
+        using Microsoft.Agents.AI;
+        
+        Console.WriteLine("Agent Framework installed successfully!");
+        ```
+        
+        Then run:
+        ```bash
+        dotnet run
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+## Authentication setup
+
+Microsoft Agent Framework uses Azure CLI credentials for authentication in development.
+
+<Steps>
+  <Step title="Install Azure CLI">
+    Download and install from [Azure CLI documentation](https://learn.microsoft.com/cli/azure/install-azure-cli):
+    
+    <Tabs>
+      <Tab title="Windows">
+        ```powershell
+        winget install -e --id Microsoft.AzureCLI
+        ```
+      </Tab>
+      <Tab title="macOS">
+        ```bash
+        brew update && brew install azure-cli
+        ```
+      </Tab>
+      <Tab title="Linux">
+        ```bash
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+  
+  <Step title="Login to Azure">
+    ```bash
+    az login
+    ```
+    
+    This opens a browser window for authentication. After login, your credentials are cached locally.
+  </Step>
+  
+  <Step title="Verify authentication">
+    ```bash
+    az account show
+    ```
+    
+    This displays your current Azure subscription details.
+  </Step>
+</Steps>
+
+<Warning>
+  **Production deployments**: Use managed identities or service principals instead of Azure CLI credentials. See [Azure authentication best practices](https://learn.microsoft.com/azure/active-directory/managed-identities-azure-resources/overview).
+</Warning>
+
+## Environment configuration
+
+### Required environment variables
+
+Set these environment variables based on your provider:
+
+<Tabs>
+  <Tab title="Azure AI Foundry (Python)">
+    ```bash
+    # Azure AI Foundry project endpoint
+    export AZURE_AI_PROJECT_ENDPOINT="https://your-project-endpoint"
+    
+    # Model deployment name (for Responses API)
+    export AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="gpt-4o"
+    
+    # Alternative: for Chat API
+    export AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o"
+    ```
+    
+    <Note>
+      Get your project endpoint from [ai.azure.com](https://ai.azure.com) → Your Project → Overview → Project connection string
+    </Note>
+  </Tab>
+  
+  <Tab title="Azure OpenAI (.NET)">
+    ```bash
+    # Azure OpenAI endpoint
+    export AZURE_OPENAI_ENDPOINT="https://your-openai-resource.openai.azure.com"
+    
+    # Model deployment name
+    export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
+    ```
+    
+    <Note>
+      Get your endpoint from [Azure Portal](https://portal.azure.com) → Your OpenAI Resource → Keys and Endpoint
+    </Note>
+  </Tab>
+  
+  <Tab title="OpenAI (Python)">
+    ```bash
+    # OpenAI API key
+    export OPENAI_API_KEY="sk-..."
+    
+    # Model ID
+    export OPENAI_CHAT_MODEL_ID="gpt-4o"
+    export OPENAI_RESPONSES_MODEL_ID="gpt-4o"
+    ```
+  </Tab>
+</Tabs>
+
+### Optional environment variables
+
+<AccordionGroup>
+  <Accordion title="Azure AI Search (RAG)">
+    ```bash
+    export AZURE_SEARCH_ENDPOINT="https://your-search-service.search.windows.net"
+    export AZURE_SEARCH_API_KEY="your-api-key"
+    export AZURE_SEARCH_INDEX_NAME="your-index-name"
+    export AZURE_SEARCH_SEMANTIC_CONFIG="your-semantic-config"
+    ```
+  </Accordion>
+  
+  <Accordion title="Anthropic Claude">
+    ```bash
+    export ANTHROPIC_API_KEY="sk-ant-..."
+    export ANTHROPIC_MODEL="claude-3-5-sonnet-20241022"
+    ```
+  </Accordion>
+  
+  <Accordion title="Ollama (Local Models)">
+    ```bash
+    export OLLAMA_ENDPOINT="http://localhost:11434"
+    export OLLAMA_MODEL="llama2"
+    ```
+  </Accordion>
+  
+  <Accordion title="Observability (OpenTelemetry)">
+    ```bash
+    export ENABLE_INSTRUMENTATION=true
+    export ENABLE_SENSITIVE_DATA=true
+    export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317/"
+    ```
+  </Accordion>
+  
+  <Accordion title="Mem0 (Memory)">
+    ```bash
+    export MEM0_API_KEY="your-mem0-api-key"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Using .env files
+
+For convenience, create a `.env` file in your project root:
+
+<Tabs>
+  <Tab title="Python">
+    Create `.env`:
+    ```bash
+    # Azure AI
+    AZURE_AI_PROJECT_ENDPOINT="https://your-project-endpoint"
+    AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="gpt-4o"
+    
+    # Optional: Azure AI Search
+    AZURE_SEARCH_ENDPOINT=""
+    AZURE_SEARCH_API_KEY=""
+    AZURE_SEARCH_INDEX_NAME=""
+    ```
+    
+    Load in your code:
+    ```python
+    from dotenv import load_dotenv
+    
+    load_dotenv()  # Loads variables from .env
+    ```
+  </Tab>
+  
+  <Tab title=".NET">
+    Create `.env` (or use appsettings.json):
+    ```bash
+    AZURE_OPENAI_ENDPOINT="https://your-openai-resource.openai.azure.com"
+    AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
+    ```
+    
+    Add the DotNetEnv package:
+    ```bash
+    dotnet add package DotNetEnv
+    ```
+    
+    Load in your code:
+    ```csharp
+    DotNetEnv.Env.Load();
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+  Never commit `.env` files with secrets to version control. Add `.env` to your `.gitignore` file.
+</Warning>
+
+## Verify your installation
+
+Test your setup with a minimal example:
+
+<CodeGroup>
+```python Python
+# test_install.py
+import asyncio
+import os
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+load_dotenv()
+
+async def test():
+    credential = AzureCliCredential()
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=credential,
+    )
+    
+    agent = client.as_agent(
+        name="TestAgent",
+        instructions="You are a helpful assistant.",
+    )
+    
+    result = await agent.run("Say hello!")
+    print(f"✓ Agent Framework is working! Response: {result}")
+
+if __name__ == "__main__":
+    asyncio.run(test())
+```
+
+```csharp .NET
+// Program.cs
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using OpenAI.Chat;
+
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+try
+{
+    AIAgent agent = new AzureOpenAIClient(
+        new Uri(endpoint),
+        new DefaultAzureCredential())
+        .GetChatClient(deploymentName)
+        .AsAIAgent(instructions: "You are a helpful assistant.", name: "TestAgent");
+    
+    var result = await agent.RunAsync("Say hello!");
+    Console.WriteLine($"✓ Agent Framework is working! Response: {result}");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"✗ Error: {ex.Message}");
+}
+```
+</CodeGroup>
+
+Run the test:
+
+<Tabs>
+  <Tab title="Python">
+    ```bash
+    python test_install.py
+    ```
+  </Tab>
+  <Tab title=".NET">
+    ```bash
+    dotnet run
+    ```
+  </Tab>
+</Tabs>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Authentication errors">
+    **Error**: `DefaultAzureCredential failed to retrieve a token`
+    
+    **Solution**:
+    1. Ensure you've run `az login` and authenticated successfully
+    2. Check that your Azure account has access to the resources
+    3. Verify your subscription is active: `az account show`
+    4. Try clearing cached credentials: `az account clear` then `az login` again
+  </Accordion>
+  
+  <Accordion title="Module not found errors (Python)">
+    **Error**: `ModuleNotFoundError: No module named 'agent_framework'`
+    
+    **Solution**:
+    1. Verify installation: `pip show agent-framework-core`
+    2. Check you're using the correct Python environment
+    3. Reinstall: `pip install --force-reinstall agent-framework --pre`
+  </Accordion>
+  
+  <Accordion title="Package not found errors (.NET)">
+    **Error**: `Package 'Microsoft.Agents.AI.OpenAI' could not be found`
+    
+    **Solution**:
+    1. Ensure you have access to the NuGet package source
+    2. Clear NuGet cache: `dotnet nuget locals all --clear`
+    3. Restore packages: `dotnet restore`
+  </Accordion>
+  
+  <Accordion title="Environment variables not loading">
+    **Error**: Variables in `.env` not being read
+    
+    **Solution**:
+    
+    **Python**:
+    - Ensure `python-dotenv` is installed: `pip install python-dotenv`
+    - Add `load_dotenv()` before accessing environment variables
+    - Check `.env` file is in the same directory as your script
+    
+    **NET**:
+    - Install DotNetEnv: `dotnet add package DotNetEnv`
+    - Call `DotNetEnv.Env.Load()` at the start of your program
+  </Accordion>
+  
+  <Accordion title="Connection timeout errors">
+    **Error**: Request timeout when calling Azure services
+    
+    **Solution**:
+    1. Check your network connection and firewall settings
+    2. Verify the endpoint URL is correct
+    3. Ensure the Azure resource is running and accessible
+    4. Check Azure service health: [Azure Status](https://status.azure.com)
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+    Build your first agent in 5 minutes
+  </Card>
+  
+  <Card title="Core Concepts" icon="book" href="/essentials/core-concepts">
+    Understand agents, tools, and sessions
+  </Card>
+  
+  <Card title="Provider Configuration" icon="plug" href="/essentials/providers">
+    Configure different LLM providers
+  </Card>
+  
+  <Card title="Sample Code" icon="code" href="https://github.com/microsoft/agent-framework/tree/main/python/samples">
+    Explore example projects
+  </Card>
+</CardGroup>
+
+<Note>
+  For additional help, visit the [GitHub repository](https://github.com/microsoft/agent-framework) or join our [Discord community](https://discord.gg/b5zjErwbQM).
+</Note>

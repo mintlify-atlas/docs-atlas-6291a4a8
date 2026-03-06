@@ -1,0 +1,596 @@
+---
+title: Sessions
+description: Manage conversation state and context across multiple turns
+---
+
+Sessions enable multi-turn conversations by maintaining conversation history and context across multiple agent invocations. They provide a lightweight mechanism for stateful interactions without requiring external storage.
+
+## What is a Session?
+
+A session is a container for conversation state that includes:
+- **Session IDs** for identifying and tracking conversations
+- **Conversation history** (stored messages)
+- **Mutable state** for context providers
+- **Provider-managed data** (memory, context, metadata)
+
+<Tabs>
+  <Tab title="Python">
+    In Python, `AgentSession` is a lightweight state container:
+
+    ```python
+    class AgentSession:
+        session_id: str              # Unique session identifier
+        service_session_id: str | None  # Service-managed ID (if using service storage)
+        state: dict[str, Any]        # Mutable state shared with providers
+    ```
+
+    Sessions are created per agent and can be serialized for persistence.
+  </Tab>
+  <Tab title=".NET">
+    In .NET, `AgentSession` is an abstract class managed by agents:
+
+    ```csharp
+    public abstract class AgentSession
+    {
+        // Session-specific implementation
+    }
+    ```
+
+    Each agent type provides its own session implementation.
+  </Tab>
+</Tabs>
+
+## Creating and Using Sessions
+
+### Basic Session Usage
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from agent_framework.azure import AzureOpenAIResponsesClient
+    import os
+
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+    )
+
+    agent = client.as_agent(
+        name="ConversationAgent",
+        instructions="You are a friendly assistant. Keep your answers brief.",
+    )
+
+    # Create a session
+    session = agent.create_session()
+
+    # Multi-turn conversation
+    response1 = await agent.run("My name is Alice and I love hiking.", session=session)
+    print(f"Agent: {response1.text}")
+
+    # Agent remembers previous context
+    response2 = await agent.run("What do you remember about me?", session=session)
+    print(f"Agent: {response2.text}")
+    # Output: "You said your name is Alice and you love hiking."
+    ```
+
+    Key points:
+    - Call `agent.create_session()` to create a new session
+    - Pass the same `session` object to all related `run()` calls
+    - The agent automatically manages conversation history
+  </Tab>
+  <Tab title=".NET">
+    ```csharp
+    var agent = client.GetChatClient(deploymentName).AsAIAgent(
+        name: "ConversationAgent",
+        instructions: "You are a friendly assistant. Keep your answers brief.");
+
+    // Create a session
+    var session = await agent.CreateSessionAsync();
+
+    // Multi-turn conversation
+    var response1 = await agent.RunAsync(
+        "My name is Alice and I love hiking.",
+        session: session);
+    Console.WriteLine($"Agent: {response1.Messages.LastOrDefault()?.Text}");
+
+    // Agent remembers previous context
+    var response2 = await agent.RunAsync(
+        "What do you remember about me?",
+        session: session);
+    Console.WriteLine($"Agent: {response2.Messages.LastOrDefault()?.Text}");
+    ```
+  </Tab>
+</Tabs>
+
+### Session with Custom ID
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    # Create session with specific ID (useful for resuming)
+    session = agent.create_session(session_id="user-123-conversation-456")
+
+    # Or get/create session for a service-managed ID
+    session = agent.get_session(
+        service_session_id="azure-thread-abc123",
+        session_id="local-session-789",
+    )
+    ```
+  </Tab>
+  <Tab title=".NET">
+    ```csharp
+    // Create session (ID is managed by the agent implementation)
+    var session = await agent.CreateSessionAsync();
+
+    // Access session ID
+    Console.WriteLine($"Session ID: {session.Id}");
+    ```
+  </Tab>
+</Tabs>
+
+## Conversation History Management
+
+### Automatic History Storage
+
+<Tabs>
+  <Tab title="Python">
+    When you provide a session without configuring storage, the framework automatically adds an in-memory history provider:
+
+    ```python
+    agent = client.as_agent(name="Assistant")
+    session = agent.create_session()
+
+    # First turn
+    await agent.run("Hello, I'm learning Python", session=session)
+
+    # Second turn - history is automatically maintained
+    await agent.run("Can you recommend some resources?", session=session)
+
+    # The agent sees both messages in the conversation
+    ```
+
+    The `InMemoryHistoryProvider` is added automatically when:
+    - A session is provided
+    - No context providers are configured
+    - Service-side storage is not requested (no `service_session_id`)
+  </Tab>
+  <Tab title=".NET">
+    ```csharp
+    var agent = client.GetChatClient(deploymentName).AsAIAgent(name: "Assistant");
+    var session = await agent.CreateSessionAsync();
+
+    // First turn
+    await agent.RunAsync("Hello, I'm learning C#", session: session);
+
+    // Second turn - history is automatically maintained
+    await agent.RunAsync("Can you recommend some resources?", session: session);
+    ```
+  </Tab>
+</Tabs>
+
+### Custom History Providers
+
+<Tabs>
+  <Tab title="Python">
+    Implement custom history storage by extending `BaseHistoryProvider`:
+
+    ```python
+    from agent_framework import BaseHistoryProvider, Message
+
+    class DatabaseHistoryProvider(BaseHistoryProvider):
+        def __init__(self, db_connection):
+            super().__init__(source_id="database")
+            self.db = db_connection
+
+        async def get_messages(self, session_id: str | None, **kwargs) -> list[Message]:
+            """Load messages from database."""
+            if not session_id:
+                return []
+            rows = await self.db.query(
+                "SELECT role, content FROM messages WHERE session_id = ?",
+                session_id
+            )
+            return [Message(role=row['role'], text=row['content']) for row in rows]
+
+        async def save_messages(
+            self,
+            session_id: str | None,
+            messages: Sequence[Message],
+            **kwargs
+        ) -> None:
+            """Save messages to database."""
+            if not session_id:
+                return
+            for msg in messages:
+                await self.db.execute(
+                    "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
+                    session_id, msg.role, msg.text
+                )
+
+    # Use custom provider
+    agent = Agent(
+        client=client,
+        name="Assistant",
+        context_providers=[DatabaseHistoryProvider(db)],
+    )
+    ```
+
+    Configure what gets stored:
+
+    ```python
+    history_provider = DatabaseHistoryProvider(
+        db,
+        load_messages=True,         # Load history before runs
+        store_inputs=True,          # Store user messages
+        store_outputs=True,         # Store agent responses
+        store_context_messages=False,  # Don't store provider context
+    )
+    ```
+  </Tab>
+  <Tab title=".NET">
+    Custom history is typically managed through `AIContextProvider`:
+
+    ```csharp
+    // Context providers manage history and state
+    // Implementation varies by agent type
+    ```
+  </Tab>
+</Tabs>
+
+## Session State
+
+<Tabs>
+  <Tab title="Python">
+    Sessions maintain a mutable `state` dictionary for provider data:
+
+    ```python
+    session = agent.create_session()
+
+    # Providers store data in session.state
+    session.state["user_preferences"] = {"theme": "dark", "language": "en"}
+    session.state["conversation_count"] = 0
+
+    # Each provider gets its own state namespace
+    # session.state = {
+    #     "in_memory": {"messages": [...]},  # InMemoryHistoryProvider
+    #     "rag": {"documents": [...]},        # RAG provider
+    #     "user_preferences": {...},           # Your custom data
+    # }
+    ```
+
+    ### Serialization
+
+    Sessions can be serialized for persistence:
+
+    ```python
+    # Serialize session
+    session_dict = session.to_dict()
+    # Store in database, file, etc.
+    json.dump(session_dict, open("session.json", "w"))
+
+    # Deserialize session
+    session_dict = json.load(open("session.json"))
+    restored_session = AgentSession.from_dict(session_dict)
+
+    # Continue conversation
+    await agent.run("What were we discussing?", session=restored_session)
+    ```
+
+    Custom types in state are automatically handled if they implement `to_dict()`/`from_dict()` or are Pydantic models.
+  </Tab>
+  <Tab title=".NET">
+    Session state is managed through the session implementation:
+
+    ```csharp
+    // State management varies by agent/session type
+    var session = await agent.CreateSessionAsync();
+
+    // Serialize session (if supported)
+    var serialized = await agent.SerializeSessionAsync(session);
+
+    // Deserialize session
+    var restored = await agent.DeserializeSessionAsync(serialized);
+    ```
+  </Tab>
+</Tabs>
+
+## Context Providers
+
+Context providers add context to agent invocations through the session:
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from agent_framework import BaseContextProvider, SessionContext
+
+    class UserContextProvider(BaseContextProvider):
+        """Add user profile to conversations."""
+
+        def __init__(self, user_service):
+            super().__init__(source_id="user_context")
+            self.user_service = user_service
+
+        async def before_run(
+            self,
+            *,
+            agent,
+            session,
+            context: SessionContext,
+            state: dict,
+        ) -> None:
+            """Add user context before agent runs."""
+            user_id = context.options.get("user_id")
+            if user_id:
+                user_profile = await self.user_service.get_user(user_id)
+                # Add context as instructions
+                context.extend_instructions(
+                    self.source_id,
+                    f"User profile: {user_profile.name}, preferences: {user_profile.preferences}"
+                )
+
+    # Use provider
+    agent = Agent(
+        client=client,
+        name="PersonalizedAgent",
+        context_providers=[UserContextProvider(user_service)],
+    )
+
+    # Context is automatically added
+    result = await agent.run(
+        "What should I watch tonight?",
+        session=session,
+        user_id="user-123",
+    )
+    ```
+
+    ### Provider Lifecycle
+
+    Context providers have two hooks:
+
+    ```python
+    class MyProvider(BaseContextProvider):
+        async def before_run(self, *, agent, session, context, state):
+            """Called before agent invocation.
+            
+            Add context by calling:
+            - context.extend_messages(self, messages)
+            - context.extend_instructions(self.source_id, instructions)
+            - context.extend_tools(self.source_id, tools)
+            """
+            pass
+
+        async def after_run(self, *, agent, session, context, state):
+            """Called after agent invocation.
+            
+            Access response via context.response
+            Store data in state dict
+            """
+            pass
+    ```
+  </Tab>
+  <Tab title=".NET">
+    ```csharp
+    // Context providers in .NET implement AIContextProvider
+    // Example: ChatHistoryContextProvider for storing chat history
+    ```
+  </Tab>
+</Tabs>
+
+## Service-Managed Sessions
+
+<Tabs>
+  <Tab title="Python">
+    Some services (like Azure AI Foundry) manage sessions server-side:
+
+    ```python
+    # Service creates and manages the session
+    session = agent.get_session(
+        service_session_id="azure-thread-abc123"
+    )
+
+    # Or pass service session ID in options
+    result = await agent.run(
+        "Hello",
+        options={"conversation_id": "azure-thread-abc123"},
+    )
+
+    # Service maintains history; no local storage needed
+    ```
+
+    The framework automatically:
+    - Skips local history providers when `service_session_id` is set
+    - Updates `session.service_session_id` from service responses
+    - Propagates conversation IDs between calls
+  </Tab>
+  <Tab title=".NET">
+    ```csharp
+    // Service-managed sessions are handled automatically
+    var session = await agent.CreateSessionAsync();
+
+    // The session ID is managed by the underlying service
+    var response = await agent.RunAsync("Hello", session: session);
+    ```
+  </Tab>
+</Tabs>
+
+## Session Streaming
+
+<Tabs>
+  <Tab title="Python">
+    Sessions work with both streaming and non-streaming modes:
+
+    ```python
+    session = agent.create_session()
+
+    # Streaming mode
+    async for chunk in agent.run("Tell me a story", session=session, stream=True):
+        print(chunk.text, end="", flush=True)
+
+    # History is automatically updated after stream completes
+
+    # Next turn remembers the story
+    result = await agent.run("What happened next?", session=session)
+    ```
+  </Tab>
+  <Tab title=".NET">
+    ```csharp
+    var session = await agent.CreateSessionAsync();
+
+    // Streaming mode
+    await foreach (var chunk in agent.RunStreamingAsync("Tell me a story", session: session))
+    {
+        Console.Write(chunk.Text);
+    }
+
+    // Next turn remembers the story
+    var response = await agent.RunAsync("What happened next?", session: session);
+    ```
+  </Tab>
+</Tabs>
+
+## Complete Example: Multi-Agent Session
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from agent_framework import Agent, tool
+    from agent_framework.azure import AzureOpenAIResponsesClient
+    import os
+
+    @tool(approval_mode="never_require")
+    def search_products(query: str) -> str:
+        """Search product catalog."""
+        return f"Found 3 products matching '{query}'"
+
+    @tool(approval_mode="never_require")
+    def check_inventory(product_id: str) -> str:
+        """Check product inventory."""
+        return f"Product {product_id} has 42 units in stock"
+
+    async def main():
+        client = AzureOpenAIResponsesClient(
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        )
+
+        # Create agent with tools
+        agent = client.as_agent(
+            name="ShoppingAgent",
+            instructions="You help users shop for products. Be helpful and concise.",
+            tools=[search_products, check_inventory],
+        )
+
+        # Start conversation
+        session = agent.create_session()
+
+        print("Shopping Assistant (type 'exit' to quit)\n")
+
+        while True:
+            user_input = input("You: ")
+            if user_input.lower() in ["exit", "quit"]:
+                break
+
+            print("Agent: ", end="", flush=True)
+            async for chunk in agent.run(user_input, session=session, stream=True):
+                if chunk.text:
+                    print(chunk.text, end="", flush=True)
+            print("\n")
+
+        # Save session for later
+        session_data = session.to_dict()
+        # Store session_data in database...
+
+    if __name__ == "__main__":
+        import asyncio
+        asyncio.run(main())
+    ```
+  </Tab>
+  <Tab title=".NET">
+    ```csharp
+    [Description("Search product catalog.")]
+    static string SearchProducts([Description("Search query")] string query)
+    {
+        return $"Found 3 products matching '{query}'";
+    }
+
+    [Description("Check product inventory.")]
+    static string CheckInventory([Description("Product ID")] string productId)
+    {
+        return $"Product {productId} has 42 units in stock";
+    }
+
+    var agent = client.GetChatClient(deploymentName).AsAIAgent(
+        name: "ShoppingAgent",
+        instructions: "You help users shop for products. Be helpful and concise.",
+        tools: [
+            AIFunctionFactory.Create(SearchProducts),
+            AIFunctionFactory.Create(CheckInventory)
+        ]);
+
+    var session = await agent.CreateSessionAsync();
+
+    Console.WriteLine("Shopping Assistant (type 'exit' to quit)\n");
+
+    while (true)
+    {
+        Console.Write("You: ");
+        var userInput = Console.ReadLine();
+        if (string.IsNullOrWhiteSpace(userInput) || 
+            userInput.Equals("exit", StringComparison.OrdinalIgnoreCase))
+            break;
+
+        Console.Write("Agent: ");
+        await foreach (var chunk in agent.RunStreamingAsync(userInput, session: session))
+        {
+            Console.Write(chunk.Text);
+        }
+        Console.WriteLine("\n");
+    }
+
+    // Serialize session
+    var sessionData = await agent.SerializeSessionAsync(session);
+    // Store sessionData...
+    ```
+  </Tab>
+</Tabs>
+
+## Best Practices
+
+<Note>
+**Session Management Tips**
+
+1. **Session Scope**: Create one session per conversation/user
+2. **Cleanup**: Clear sessions when conversations end
+3. **Serialization**: Persist sessions for long-running conversations
+4. **State Size**: Keep session state small; offload large data to external storage
+5. **Provider Order**: Providers run in order; plan dependencies carefully
+6. **Testing**: Test session behavior with multi-turn scenarios
+</Note>
+
+<Warning>
+**Production Considerations**
+
+- **Expiration**: Implement session timeouts to free memory
+- **Storage**: Use durable storage (database/cache) for production sessions
+- **Scaling**: Sessions should be stateless externally for horizontal scaling
+- **Security**: Validate session ownership before resuming conversations
+- **Limits**: Set maximum session size to prevent memory exhaustion
+- **Monitoring**: Track active sessions and memory usage
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Agents" icon="robot" href="/concepts/agents">
+    Learn how agents interact with sessions
+  </Card>
+  <Card title="Middleware" icon="layer-group" href="/concepts/middleware">
+    Modify session behavior with middleware
+  </Card>
+  <Card title="Tools" icon="wrench" href="/concepts/tools">
+    Tools can access session state
+  </Card>
+  <Card title="Observability" icon="chart-line" href="/concepts/observability">
+    Monitor session lifecycle with telemetry
+  </Card>
+</CardGroup>

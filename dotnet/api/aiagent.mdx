@@ -1,0 +1,428 @@
+---
+title: AIAgent
+description: API reference for AIAgent class in Microsoft Agent Framework .NET SDK
+---
+
+# AIAgent API Reference
+
+The base abstraction for all AI agents, defining the core interface for agent interactions and conversation management.
+
+## AIAgent
+
+Provides the foundational class for implementing AI agents that can participate in conversations and process user requests.
+
+```csharp
+using Microsoft.Agents.AI;
+```
+
+### Overview
+
+The `AIAgent` class serves as the base for implementing AI agents in the .NET SDK. An agent instance may participate in multiple concurrent conversations, and each conversation may involve multiple agents working together.
+
+### Properties
+
+<ParamField path="Id" type="string" required>
+  The unique identifier for this agent instance. For in-memory agents, defaults to a randomly-generated ID, while service-backed agents typically use the identifier assigned by the backing service.
+</ParamField>
+
+<ParamField path="Name" type="string?">
+  The human-readable name of the agent, used for display purposes and to help users identify the agent's purpose or capabilities.
+</ParamField>
+
+<ParamField path="Description" type="string?">
+  A description of the agent's purpose, capabilities, or behavior. Helps models and users understand the agent's intended purpose.
+</ParamField>
+
+<ParamField path="CurrentRunContext" type="AgentRunContext?" static>
+  Gets or sets the `AgentRunContext` for the current agent run. This value flows across async calls.
+</ParamField>
+
+### Methods
+
+#### CreateSessionAsync()
+
+Creates a new conversation session that is compatible with this agent.
+
+```csharp
+public ValueTask<AgentSession> CreateSessionAsync(
+    CancellationToken cancellationToken = default
+)
+```
+
+<ParamField path="cancellationToken" type="CancellationToken" default="default">
+  The cancellation token to monitor for cancellation requests.
+</ParamField>
+
+<ResponseField name="return" type="ValueTask<AgentSession>">
+  A new `AgentSession` instance ready for use with this agent.
+</ResponseField>
+
+Each session represents an independent conversation. If the agent supports multiple session types, this method returns the default or configured session type.
+
+#### RunAsync()
+
+Runs the agent with the provided messages, session, and options.
+
+```csharp
+// Run with no message (uses existing session context)
+public Task<AgentResponse> RunAsync(
+    AgentSession? session = null,
+    AgentRunOptions? options = null,
+    CancellationToken cancellationToken = default
+)
+
+// Run with a text message
+public Task<AgentResponse> RunAsync(
+    string message,
+    AgentSession? session = null,
+    AgentRunOptions? options = null,
+    CancellationToken cancellationToken = default
+)
+
+// Run with a single chat message
+public Task<AgentResponse> RunAsync(
+    ChatMessage message,
+    AgentSession? session = null,
+    AgentRunOptions? options = null,
+    CancellationToken cancellationToken = default
+)
+
+// Run with a collection of chat messages
+public Task<AgentResponse> RunAsync(
+    IEnumerable<ChatMessage> messages,
+    AgentSession? session = null,
+    AgentRunOptions? options = null,
+    CancellationToken cancellationToken = default
+)
+```
+
+<ParamField path="message" type="string | ChatMessage">
+  The message to send to the agent. String messages are automatically wrapped in a `ChatMessage` with `ChatRole.User`.
+</ParamField>
+
+<ParamField path="messages" type="IEnumerable<ChatMessage>">
+  A collection of messages to send to the agent for processing.
+</ParamField>
+
+<ParamField path="session" type="AgentSession?">
+  The conversation session to use. If null, a new session will be created. The session is updated with input messages and response messages.
+</ParamField>
+
+<ParamField path="options" type="AgentRunOptions?">
+  Optional configuration parameters for controlling the agent's invocation behavior.
+</ParamField>
+
+<ParamField path="cancellationToken" type="CancellationToken" default="default">
+  The cancellation token to monitor for cancellation requests.
+</ParamField>
+
+<ResponseField name="return" type="Task<AgentResponse>">
+  An `AgentResponse` containing the agent's output, including all generated messages and metadata.
+</ResponseField>
+
+#### RunStreamingAsync()
+
+Runs the agent in streaming mode, providing real-time updates as the agent generates its response.
+
+```csharp
+// Stream with no message
+public IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
+    AgentSession? session = null,
+    AgentRunOptions? options = null,
+    CancellationToken cancellationToken = default
+)
+
+// Stream with a text message
+public IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
+    string message,
+    AgentSession? session = null,
+    AgentRunOptions? options = null,
+    CancellationToken cancellationToken = default
+)
+
+// Stream with a single chat message
+public IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
+    ChatMessage message,
+    AgentSession? session = null,
+    AgentRunOptions? options = null,
+    CancellationToken cancellationToken = default
+)
+
+// Stream with a collection of chat messages
+public IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
+    IEnumerable<ChatMessage> messages,
+    AgentSession? session = null,
+    AgentRunOptions? options = null,
+    CancellationToken cancellationToken = default
+)
+```
+
+<ParamField path="message" type="string | ChatMessage">
+  The message to send to the agent. String messages are automatically wrapped in a `ChatMessage` with `ChatRole.User`.
+</ParamField>
+
+<ParamField path="messages" type="IEnumerable<ChatMessage>">
+  A collection of messages to send to the agent for processing.
+</ParamField>
+
+<ParamField path="session" type="AgentSession?">
+  The conversation session to use. If null, a new session will be created.
+</ParamField>
+
+<ParamField path="options" type="AgentRunOptions?">
+  Optional configuration parameters for controlling the agent's invocation behavior.
+</ParamField>
+
+<ParamField path="cancellationToken" type="CancellationToken" default="default">
+  The cancellation token to monitor for cancellation requests.
+</ParamField>
+
+<ResponseField name="return" type="IAsyncEnumerable<AgentResponseUpdate>">
+  An asynchronous enumerable of `AgentResponseUpdate` instances representing the streaming response. Each update represents a portion of the complete response.
+</ResponseField>
+
+#### SerializeSessionAsync()
+
+Serializes an agent session to its JSON representation for persistent storage.
+
+```csharp
+public ValueTask<JsonElement> SerializeSessionAsync(
+    AgentSession session,
+    JsonSerializerOptions? jsonSerializerOptions = null,
+    CancellationToken cancellationToken = default
+)
+```
+
+<ParamField path="session" type="AgentSession" required>
+  The session to serialize.
+</ParamField>
+
+<ParamField path="jsonSerializerOptions" type="JsonSerializerOptions?">
+  Optional settings to customize the serialization process.
+</ParamField>
+
+<ParamField path="cancellationToken" type="CancellationToken" default="default">
+  The cancellation token to monitor for cancellation requests.
+</ParamField>
+
+<ResponseField name="return" type="ValueTask<JsonElement>">
+  A `JsonElement` containing the serialized session state.
+</ResponseField>
+
+#### DeserializeSessionAsync()
+
+Deserializes an agent session from its JSON serialized representation.
+
+```csharp
+public ValueTask<AgentSession> DeserializeSessionAsync(
+    JsonElement serializedState,
+    JsonSerializerOptions? jsonSerializerOptions = null,
+    CancellationToken cancellationToken = default
+)
+```
+
+<ParamField path="serializedState" type="JsonElement" required>
+  A `JsonElement` containing the serialized session state.
+</ParamField>
+
+<ParamField path="jsonSerializerOptions" type="JsonSerializerOptions?">
+  Optional settings to customize the deserialization process.
+</ParamField>
+
+<ParamField path="cancellationToken" type="CancellationToken" default="default">
+  The cancellation token to monitor for cancellation requests.
+</ParamField>
+
+<ResponseField name="return" type="ValueTask<AgentSession>">
+  A restored `AgentSession` instance with the state from the serialized data.
+</ResponseField>
+
+#### GetService()
+
+Retrieves a service of the specified type from the agent.
+
+```csharp
+public virtual object? GetService(
+    Type serviceType,
+    object? serviceKey = null
+)
+
+public TService? GetService<TService>(
+    object? serviceKey = null
+)
+```
+
+<ParamField path="serviceType" type="Type" required>
+  The type of object being requested.
+</ParamField>
+
+<ParamField path="serviceKey" type="object?">
+  An optional key that can be used to help identify the target service.
+</ParamField>
+
+<ResponseField name="return" type="object? | TService?">
+  The found object, or null if not available.
+</ResponseField>
+
+### Example: Basic Agent Usage
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+// Create an agent (using ChatClientAgent as a concrete implementation)
+var chatClient = new OpenAIChatClient(model: "gpt-4", apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY"));
+var agent = chatClient.AsAIAgent(
+    instructions: "You are a helpful assistant.",
+    name: "Assistant",
+    description: "A helpful AI assistant"
+);
+
+// Create a session
+var session = await agent.CreateSessionAsync();
+
+// Run the agent
+var response = await agent.RunAsync(
+    "What is the capital of France?",
+    session: session
+);
+
+Console.WriteLine(response.Text);
+```
+
+### Example: Streaming Responses
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+var agent = chatClient.AsAIAgent(
+    instructions: "You are a helpful assistant.",
+    name: "Assistant"
+);
+
+var session = await agent.CreateSessionAsync();
+
+// Stream the response
+await foreach (var update in agent.RunStreamingAsync(
+    "Tell me a short story.",
+    session: session
+))
+{
+    Console.Write(update.Text);
+}
+```
+
+### Example: Multi-Turn Conversation
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+var agent = chatClient.AsAIAgent(
+    instructions: "You are a helpful assistant."
+);
+
+var session = await agent.CreateSessionAsync();
+
+// First turn
+var response1 = await agent.RunAsync("My name is Alice.", session);
+Console.WriteLine(response1.Text);
+
+// Second turn (agent remembers the context)
+var response2 = await agent.RunAsync("What's my name?", session);
+Console.WriteLine(response2.Text); // Should say "Alice"
+```
+
+### Example: Session Serialization
+
+```csharp
+using Microsoft.Agents.AI;
+using System.Text.Json;
+
+var agent = chatClient.AsAIAgent();
+var session = await agent.CreateSessionAsync();
+
+// Have a conversation
+await agent.RunAsync("Remember: my favorite color is blue.", session);
+
+// Serialize the session
+var serialized = await agent.SerializeSessionAsync(session);
+var sessionJson = JsonSerializer.Serialize(serialized);
+
+// Save to storage (database, file, etc.)
+File.WriteAllText("session.json", sessionJson);
+
+// Later: load and deserialize
+var loadedJson = File.ReadAllText("session.json");
+var loadedElement = JsonSerializer.Deserialize<JsonElement>(loadedJson);
+var restoredSession = await agent.DeserializeSessionAsync(loadedElement);
+
+// Continue the conversation
+var response = await agent.RunAsync("What's my favorite color?", restoredSession);
+Console.WriteLine(response.Text); // Should say "blue"
+```
+
+### Protected Methods
+
+These methods are intended for implementation by derived classes:
+
+#### CreateSessionCoreAsync()
+
+Core implementation of session creation logic.
+
+```csharp
+protected abstract ValueTask<AgentSession> CreateSessionCoreAsync(
+    CancellationToken cancellationToken = default
+);
+```
+
+#### RunCoreAsync()
+
+Core implementation of the agent invocation logic.
+
+```csharp
+protected abstract Task<AgentResponse> RunCoreAsync(
+    IEnumerable<ChatMessage> messages,
+    AgentSession? session = null,
+    AgentRunOptions? options = null,
+    CancellationToken cancellationToken = default
+);
+```
+
+#### RunCoreStreamingAsync()
+
+Core implementation of the agent streaming invocation logic.
+
+```csharp
+protected abstract IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+    IEnumerable<ChatMessage> messages,
+    AgentSession? session = null,
+    AgentRunOptions? options = null,
+    CancellationToken cancellationToken = default
+);
+```
+
+#### SerializeSessionCoreAsync()
+
+Core implementation of session serialization logic.
+
+```csharp
+protected abstract ValueTask<JsonElement> SerializeSessionCoreAsync(
+    AgentSession session,
+    JsonSerializerOptions? jsonSerializerOptions = null,
+    CancellationToken cancellationToken = default
+);
+```
+
+#### DeserializeSessionCoreAsync()
+
+Core implementation of session deserialization logic.
+
+```csharp
+protected abstract ValueTask<AgentSession> DeserializeSessionCoreAsync(
+    JsonElement serializedState,
+    JsonSerializerOptions? jsonSerializerOptions = null,
+    CancellationToken cancellationToken = default
+);
+```

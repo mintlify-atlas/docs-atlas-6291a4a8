@@ -1,0 +1,605 @@
+---
+title: "Create Your First Agent"
+description: "Build a complete AI agent with tools, streaming, and conversation management"
+---
+
+## Overview
+
+In this guide, you'll build a fully-featured AI agent step-by-step. You'll learn how to:
+
+- Create an agent with custom instructions
+- Add function tools for extended capabilities
+- Implement streaming responses
+- Manage multi-turn conversations with sessions
+- Handle errors and edge cases
+
+<Note>
+  This guide assumes you've completed the [Installation](/dotnet/installation) guide and reviewed the [Quickstart](/dotnet/quickstart).
+</Note>
+
+## Project Setup
+
+First, create a new console application:
+
+```bash
+dotnet new console -n WeatherAgent
+cd WeatherAgent
+dotnet add package Microsoft.Agents.AI
+dotnet add package Azure.AI.OpenAI
+dotnet add package Azure.Identity
+dotnet add package Microsoft.Extensions.AI.OpenAI
+```
+
+## Step 1: Hello Agent
+
+Let's start with a simple agent that tells jokes:
+
+```csharp Program.cs
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using OpenAI.Chat;
+
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIAgent agent = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new DefaultAzureCredential())
+    .GetChatClient(deploymentName)
+    .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
+
+// Invoke the agent and output the text result
+Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
+```
+
+### Understanding the Code
+
+<Steps>
+
+<Step title="Import namespaces">
+  ```csharp
+  using Azure.AI.OpenAI;      // Azure OpenAI client
+  using Azure.Identity;        // Azure authentication
+  using Microsoft.Agents.AI;   // Agent framework
+  using OpenAI.Chat;           // Chat client interface
+  ```
+</Step>
+
+<Step title="Configure connection">
+  ```csharp
+  var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+      ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+  var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+  ```
+  
+  Environment variables keep secrets out of source code and provide flexibility across environments.
+</Step>
+
+<Step title="Create the agent">
+  ```csharp
+  AIAgent agent = new AzureOpenAIClient(
+      new Uri(endpoint),
+      new DefaultAzureCredential())     // Azure authentication
+      .GetChatClient(deploymentName)    // Get chat client for model
+      .AsAIAgent(                       // Convert to AIAgent
+          instructions: "You are good at telling jokes.",
+          name: "Joker");
+  ```
+  
+  The fluent API chains: Authentication → Chat Client → AI Agent
+</Step>
+
+<Step title="Run the agent">
+  ```csharp
+  Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
+  ```
+  
+  `RunAsync` sends a message and returns the complete response as a string.
+</Step>
+
+</Steps>
+
+### Run the Agent
+
+```bash
+dotnet run
+```
+
+You should see a pirate joke printed to the console!
+
+## Step 2: Add Streaming
+
+Streaming provides real-time feedback as the agent generates responses:
+
+```csharp Program.cs
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using OpenAI.Chat;
+
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+AIAgent agent = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new DefaultAzureCredential())
+    .GetChatClient(deploymentName)
+    .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
+
+// Non-streaming response
+Console.WriteLine("=== Non-Streaming ===");
+Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
+Console.WriteLine();
+
+// Streaming response
+Console.WriteLine("=== Streaming ===");
+await foreach (var update in agent.RunStreamingAsync("Tell me a joke about a pirate."))
+{
+    Console.Write(update);  // Write without newline to show progressive output
+}
+Console.WriteLine();
+```
+
+### Streaming Explained
+
+<CodeGroup>
+
+```csharp Non-Streaming
+// Waits for complete response, then returns
+string response = await agent.RunAsync("Tell me a joke.");
+Console.WriteLine(response);
+```
+
+```csharp Streaming
+// Yields tokens as they arrive
+await foreach (var update in agent.RunStreamingAsync("Tell me a joke."))
+{
+    Console.Write(update);  // Shows progressive output
+}
+```
+
+</CodeGroup>
+
+<Note>
+  Use streaming for user-facing applications to provide immediate feedback. Use non-streaming for background processing or when you need the complete response before proceeding.
+</Note>
+
+## Step 3: Add Function Tools
+
+Tools allow agents to call functions and access external data:
+
+```csharp Program.cs
+using System.ComponentModel;
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using OpenAI.Chat;
+
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+[Description("Get the weather for a given location.")]
+static string GetWeather([Description("The location to get the weather for.")] string location)
+    => $"The weather in {location} is cloudy with a high of 15°C.";
+
+// Create the chat client and agent, and provide the function tool to the agent
+AIAgent agent = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new DefaultAzureCredential())
+    .GetChatClient(deploymentName)
+    .AsAIAgent(
+        instructions: "You are a helpful assistant",
+        tools: [AIFunctionFactory.Create(GetWeather)]);
+
+// Non-streaming agent interaction with function tools
+Console.WriteLine("=== Non-Streaming with Tools ===");
+Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?"));
+Console.WriteLine();
+
+// Streaming agent interaction with function tools
+Console.WriteLine("=== Streaming with Tools ===");
+await foreach (var update in agent.RunStreamingAsync("What is the weather like in Amsterdam?"))
+{
+    Console.Write(update);
+}
+Console.WriteLine();
+```
+
+### Tool Development Guide
+
+<Steps>
+
+<Step title="Define the function">
+  ```csharp
+  [Description("Get the weather for a given location.")]
+  static string GetWeather(
+      [Description("The location to get the weather for.")] string location)
+      => $"The weather in {location} is cloudy with a high of 15°C.";
+  ```
+  
+  **Key points:**
+  - Use `[Description]` attribute on the function and parameters
+  - Descriptions help the agent understand when to call the function
+  - Keep function names and descriptions clear and specific
+</Step>
+
+<Step title="Register the tool">
+  ```csharp
+  using Microsoft.Extensions.AI;
+
+  AIAgent agent = chatClient.AsAIAgent(
+      instructions: "You are a helpful assistant",
+      tools: [AIFunctionFactory.Create(GetWeather)]);
+  ```
+  
+  `AIFunctionFactory.Create()` converts your function into an `AIFunction` that the agent can call.
+</Step>
+
+<Step title="The agent decides when to call">
+  When you ask "What is the weather like in Amsterdam?", the agent:
+  1. Recognizes it needs weather information
+  2. Calls the `GetWeather` function with `location: "Amsterdam"`
+  3. Incorporates the result into its response
+</Step>
+
+</Steps>
+
+### Advanced Tool Example
+
+Here's a more complex tool with multiple parameters:
+
+```csharp
+using System.ComponentModel;
+
+[Description("Search for flights between two cities.")]
+static string SearchFlights(
+    [Description("Departure city")] string from,
+    [Description("Destination city")] string to,
+    [Description("Departure date in YYYY-MM-DD format")] string date)
+{
+    // In a real application, this would call an API
+    return $"Found 3 flights from {from} to {to} on {date}. Prices start at $299.";
+}
+
+[Description("Get the current time in a specific timezone.")]
+static string GetTime(
+    [Description("Timezone (e.g., America/New_York, Europe/London)")] string timezone)
+{
+    // In a real application, use TimeZoneInfo
+    return $"Current time in {timezone}: 14:30";
+}
+
+AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
+    .GetChatClient(deploymentName)
+    .AsAIAgent(
+        instructions: "You are a travel assistant.",
+        tools: [
+            AIFunctionFactory.Create(SearchFlights),
+            AIFunctionFactory.Create(GetTime)
+        ]);
+
+Console.WriteLine(await agent.RunAsync(
+    "Find me flights from Seattle to Tokyo on 2026-04-15. What time is it there now?"));
+```
+
+<Note>
+  The agent can call multiple tools in a single turn to gather all necessary information.
+</Note>
+
+## Step 4: Multi-Turn Conversations
+
+Use `AgentSession` to maintain conversation context:
+
+```csharp Program.cs
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using OpenAI.Chat;
+
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+AIAgent agent = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new DefaultAzureCredential())
+    .GetChatClient(deploymentName)
+    .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
+
+// Create a session to preserve conversation history
+AgentSession session = await agent.CreateSessionAsync();
+
+Console.WriteLine("=== Turn 1 ===");
+Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session));
+Console.WriteLine();
+
+Console.WriteLine("=== Turn 2 ===");
+Console.WriteLine(await agent.RunAsync(
+    "Now add some emojis to the joke and tell it in the voice of a pirate's parrot.",
+    session));
+Console.WriteLine();
+```
+
+### Session Management
+
+<AccordionGroup>
+
+<Accordion title="When to use sessions">
+  Use sessions when:
+  - Building conversational interfaces (chatbots, assistants)
+  - The agent needs to remember previous interactions
+  - You're implementing follow-up questions or clarifications
+  - Context from earlier messages affects later responses
+</Accordion>
+
+<Accordion title="Session lifecycle">
+  ```csharp
+  // Create a new session
+  AgentSession session = await agent.CreateSessionAsync();
+  
+  // Use the session across multiple turns
+  await agent.RunAsync("First message", session);
+  await agent.RunAsync("Follow-up question", session);
+  
+  // Session automatically maintains history
+  // Dispose if needed (implements IDisposable if resources are held)
+  ```
+</Accordion>
+
+<Accordion title="Multiple concurrent sessions">
+  ```csharp
+  // Different users or conversations
+  var userSession1 = await agent.CreateSessionAsync();
+  var userSession2 = await agent.CreateSessionAsync();
+  
+  // Each session has independent history
+  await agent.RunAsync("Hello, I'm Alice", userSession1);
+  await agent.RunAsync("Hello, I'm Bob", userSession2);
+  
+  // Sessions don't interfere with each other
+  await agent.RunAsync("What's my name?", userSession1);  // "Alice"
+  await agent.RunAsync("What's my name?", userSession2);  // "Bob"
+  ```
+</Accordion>
+
+</AccordionGroup>
+
+### Streaming with Sessions
+
+You can combine sessions with streaming:
+
+```csharp
+AgentSession session = await agent.CreateSessionAsync();
+
+Console.WriteLine("User: Tell me a joke about a pirate.");
+await foreach (var update in agent.RunStreamingAsync("Tell me a joke about a pirate.", session))
+{
+    Console.Write(update);
+}
+Console.WriteLine("\n");
+
+Console.WriteLine("User: Now make it funnier.");
+await foreach (var update in agent.RunStreamingAsync("Now make it funnier.", session))
+{
+    Console.Write(update);
+}
+Console.WriteLine();
+```
+
+## Complete Example: Weather Assistant
+
+Here's a complete, production-ready weather assistant:
+
+```csharp Program.cs
+using System.ComponentModel;
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using OpenAI.Chat;
+
+// Configuration
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+// Tool: Get current weather
+[Description("Get the current weather for a location.")]
+static string GetWeather([Description("The city name")] string location)
+{
+    // In production, call a real weather API
+    var weatherData = new Dictionary<string, string>
+    {
+        ["Seattle"] = "Rainy, 12°C",
+        ["Amsterdam"] = "Cloudy, 15°C",
+        ["Tokyo"] = "Sunny, 22°C",
+        ["London"] = "Foggy, 10°C"
+    };
+    
+    return weatherData.TryGetValue(location, out var weather)
+        ? $"The weather in {location} is {weather}."
+        : $"Weather data not available for {location}.";
+}
+
+// Tool: Get weather forecast
+[Description("Get the 3-day weather forecast for a location.")]
+static string GetForecast([Description("The city name")] string location)
+{
+    return $"Forecast for {location}:\n" +
+           $"Today: Partly cloudy, 15°C\n" +
+           $"Tomorrow: Sunny, 18°C\n" +
+           $"Day 3: Rainy, 12°C";
+}
+
+// Create the agent with tools
+AIAgent agent = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new DefaultAzureCredential())
+    .GetChatClient(deploymentName)
+    .AsAIAgent(
+        instructions: "You are a helpful weather assistant. Provide friendly, accurate weather information.",
+        name: "WeatherBot",
+        tools: [
+            AIFunctionFactory.Create(GetWeather),
+            AIFunctionFactory.Create(GetForecast)
+        ]);
+
+// Interactive conversation loop
+Console.WriteLine("Weather Assistant (type 'exit' to quit)");
+Console.WriteLine("========================================\n");
+
+AgentSession session = await agent.CreateSessionAsync();
+
+while (true)
+{
+    Console.Write("You: ");
+    var input = Console.ReadLine();
+    
+    if (string.IsNullOrWhiteSpace(input) || input.ToLower() == "exit")
+        break;
+    
+    Console.Write("Assistant: ");
+    
+    try
+    {
+        await foreach (var update in agent.RunStreamingAsync(input, session))
+        {
+            Console.Write(update);
+        }
+        Console.WriteLine("\n");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"\nError: {ex.Message}\n");
+    }
+}
+
+Console.WriteLine("Goodbye!");
+```
+
+### Try These Queries
+
+Run the application and try:
+
+- "What's the weather in Seattle?"
+- "How about Tokyo?"
+- "Give me the forecast for Amsterdam"
+- "Compare the weather in London and Tokyo"
+
+## Error Handling
+
+Add robust error handling to your agents:
+
+```csharp
+try
+{
+    var response = await agent.RunAsync("Hello", session);
+    Console.WriteLine(response);
+}
+catch (InvalidOperationException ex)
+{
+    Console.WriteLine($"Configuration error: {ex.Message}");
+    Console.WriteLine("Make sure AZURE_OPENAI_ENDPOINT is set.");
+}
+catch (Azure.RequestFailedException ex)
+{
+    Console.WriteLine($"Azure API error: {ex.Message}");
+    Console.WriteLine($"Status: {ex.Status}");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"Unexpected error: {ex.Message}");
+}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Clear Instructions" icon="message">
+    Provide specific, detailed instructions to guide agent behavior.
+  </Card>
+  <Card title="Tool Descriptions" icon="wrench">
+    Write clear descriptions for functions and parameters.
+  </Card>
+  <Card title="Use Async/Await" icon="clock">
+    Always use async patterns; never block with `.Result` or `.Wait()`.
+  </Card>
+  <Card title="Handle Errors" icon="shield">
+    Implement proper error handling for network and API failures.
+  </Card>
+  <Card title="Environment Config" icon="gear">
+    Use environment variables for all configuration and secrets.
+  </Card>
+  <Card title="Session Management" icon="history">
+    Create sessions for conversations, dispose when no longer needed.
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Working with Tools" icon="wrench" href="/dotnet/tools">
+    Deep dive into creating and using agent tools
+  </Card>
+  <Card title="Agent Sessions" icon="history" href="/dotnet/sessions">
+    Advanced session management and context control
+  </Card>
+  <Card title="Memory & Context" icon="database" href="/dotnet/memory">
+    Add persistent memory to your agents
+  </Card>
+  <Card title="Workflows" icon="diagram-project" href="/dotnet/workflows">
+    Build multi-agent workflows and orchestration
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+
+<Accordion title="Agent not calling tools">
+  **Problem**: Agent ignores available functions.
+  
+  **Solutions**:
+  - Ensure `[Description]` attributes are clear and specific
+  - Check that tool parameters match what the agent expects
+  - Make sure you're passing `tools` parameter when creating the agent
+  - Verify the agent's instructions mention it should use tools if needed
+</Accordion>
+
+<Accordion title="Streaming not working">
+  **Problem**: No output when using `RunStreamingAsync`.
+  
+  **Solutions**:
+  - Use `Console.Write()` not `Console.WriteLine()` for each update
+  - Ensure you're using `await foreach` correctly
+  - Check network connectivity and API quotas
+</Accordion>
+
+<Accordion title="Session context not preserved">
+  **Problem**: Agent doesn't remember previous messages.
+  
+  **Solutions**:
+  - Ensure you're passing the same `session` object to each `RunAsync` call
+  - Verify you created the session with `await agent.CreateSessionAsync()`
+  - Check that you're not creating a new session between turns
+</Accordion>
+
+<Accordion title="Performance issues">
+  **Problem**: Agent responses are slow.
+  
+  **Solutions**:
+  - Use streaming for better perceived performance
+  - Consider using a faster model (gpt-4o-mini vs gpt-4)
+  - Reduce the number of tools if you have many
+  - Check your network latency to Azure
+</Accordion>
+
+</AccordionGroup>

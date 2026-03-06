@@ -1,97 +1,155 @@
 ---
 title: "Introduction"
-description: "Welcome to the new home for your documentation"
+description: "Build, orchestrate, and deploy AI agents with Microsoft Agent Framework"
 ---
 
-## Setting up
+# Welcome to Microsoft Agent Framework
 
-Get your documentation site up and running in minutes.
+Microsoft Agent Framework is a comprehensive multi-language framework for building, orchestrating, and deploying AI agents with support for Python and .NET. From simple chat agents to complex multi-agent workflows with graph-based orchestration, the framework provides everything you need to build production-ready AI agent systems.
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get started in minutes with your first agent
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Python SDK" icon="python" href="/python/quickstart">
+    Build agents with Python
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title=".NET SDK" icon="code" href="/dotnet/quickstart">
+    Build agents with C# and .NET
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="API Reference" icon="book" href="/python/api/agent">
+    Explore the complete API
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Key Features
 
-Everything you need to create world-class documentation.
+<CardGroup cols={2}>
+  <Card title="Multi-Language Support" icon="language">
+    Full framework support for both Python and .NET with consistent APIs across both languages
+  </Card>
+  <Card title="Graph-Based Workflows" icon="diagram-project">
+    Connect agents and functions using data flows with streaming, checkpointing, and time-travel capabilities
+  </Card>
+  <Card title="Flexible Middleware" icon="layer-group">
+    Middleware system for request/response processing, exception handling, and custom pipelines
+  </Card>
+  <Card title="Multiple Providers" icon="plug">
+    Support for OpenAI, Azure OpenAI, Anthropic, AWS Bedrock, Ollama, and more
+  </Card>
+  <Card title="Built-in Observability" icon="chart-line">
+    OpenTelemetry integration for distributed tracing, monitoring, and debugging
+  </Card>
+  <Card title="Human-in-the-Loop" icon="hand">
+    Tool approval workflows and human review capabilities
+  </Card>
+  <Card title="Developer UI" icon="desktop">
+    Interactive DevUI for agent development, testing, and debugging workflows
+  </Card>
+  <Card title="A2A Protocol" icon="network-wired">
+    Agent-to-Agent protocol for building distributed agent systems
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Quick Example
 
-## Need inspiration?
+Get started with a simple agent in just a few lines of code:
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CodeGroup>
+
+```python Python
+import asyncio
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
+
+async def main():
+    agent = AzureOpenAIResponsesClient(
+        credential=AzureCliCredential(),
+    ).as_agent(
+        name="HaikuBot",
+        instructions="You are an upbeat assistant that writes beautifully.",
+    )
+    
+    print(await agent.run("Write a haiku about Microsoft Agent Framework."))
+
+asyncio.run(main())
+```
+
+```csharp C#
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using OpenAI.Chat;
+
+var agent = new AzureOpenAIClient(
+        new Uri(Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")),
+        new DefaultAzureCredential())
+    .GetChatClient("gpt-4o-mini")
+    .AsAIAgent(
+        name: "HaikuBot",
+        instructions: "You are an upbeat assistant that writes beautifully.");
+
+Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
+```
+
+</CodeGroup>
+
+## What You Can Build
+
+<CardGroup cols={2}>
+  <Card title="Chat Agents" icon="comments">
+    Build conversational agents with memory, tools, and multi-turn interactions
+  </Card>
+  <Card title="Multi-Agent Workflows" icon="users">
+    Orchestrate multiple agents working together with handoffs and group chat patterns
+  </Card>
+  <Card title="RAG Systems" icon="database">
+    Create retrieval-augmented generation systems with vector search and context providers
+  </Card>
+  <Card title="Tool-Using Agents" icon="wrench">
+    Build agents that can call functions, APIs, and external services
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<Steps>
+  <Step title="Install the Framework">
+    Choose your language and install the package
+    
+    <CodeGroup>
+    ```bash Python
+    pip install agent-framework --pre
+    ```
+    ```bash .NET
+    dotnet add package Microsoft.Agents.AI
+    ```
+    </CodeGroup>
+  </Step>
+  
+  <Step title="Follow the Quickstart">
+    Build your first agent in under 5 minutes
+    
+    [Get Started →](/quickstart)
+  </Step>
+  
+  <Step title="Explore the Guides">
+    Learn about agents, tools, workflows, and more
+    
+    [Core Concepts →](/concepts/agents)
+  </Step>
+</Steps>
+
+## Community & Support
+
+<CardGroup cols={3}>
+  <Card title="Discord" icon="discord" href="https://discord.gg/b5zjErwbQM">
+    Join our community on Discord
+  </Card>
+  <Card title="GitHub" icon="github" href="https://github.com/microsoft/agent-framework">
+    View source and contribute
+  </Card>
+  <Card title="Issues" icon="bug" href="https://github.com/microsoft/agent-framework/issues">
+    Report bugs and request features
+  </Card>
+</CardGroup>

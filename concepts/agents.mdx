@@ -1,0 +1,432 @@
+---
+title: Agents
+description: Learn how to create and use agents in Microsoft Agent Framework
+---
+
+Agents are the primary abstraction in Microsoft Agent Framework for building AI-powered conversational experiences. An agent combines a language model, optional tools (functions), instructions, and configuration into a reusable component that can process user messages and generate responses.
+
+## What is an Agent?
+
+An agent encapsulates:
+- **A language model client** (e.g., Azure OpenAI, Anthropic, Ollama)
+- **Instructions** that define the agent's behavior and personality
+- **Tools** (functions) the agent can call to access external data or perform actions
+- **Middleware** for intercepting and modifying requests/responses
+- **Session management** for multi-turn conversations
+
+<Tabs>
+  <Tab title="Python">
+    In Python, agents implement the `SupportsAgentRun` protocol and the framework provides:
+    - **`Agent`** - Main agent class with middleware and telemetry
+    - **`RawAgent`** - Core agent without built-in layers
+    - **`BaseAgent`** - Minimal base class for custom implementations
+
+    The `Agent` class is the recommended starting point for most use cases.
+  </Tab>
+  <Tab title=".NET">
+    In .NET, all agents derive from the abstract `AIAgent` class. The framework provides:
+    - **`ChatClientAgent`** - Agent backed by an `IChatClient`
+    - Custom agent implementations by extending `AIAgent`
+
+    Use the `AsAIAgent()` extension method to create agents from chat clients.
+  </Tab>
+</Tabs>
+
+## Creating Your First Agent
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from agent_framework.azure import AzureOpenAIResponsesClient
+    from azure.identity import AzureCliCredential
+    import os
+
+    # Create a client
+    credential = AzureCliCredential()
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=credential,
+    )
+
+    # Create an agent
+    agent = client.as_agent(
+        name="HelloAgent",
+        instructions="You are a friendly assistant. Keep your answers brief.",
+    )
+
+    # Run the agent
+    result = await agent.run("What is the capital of France?")
+    print(result.text)
+    ```
+  </Tab>
+  <Tab title=".NET">
+    ```csharp
+    using Azure.AI.OpenAI;
+    using Azure.Identity;
+    using Microsoft.Agents.AI;
+
+    var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+        ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+    var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+    // Create an agent
+    AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
+        .GetChatClient(deploymentName)
+        .AsAIAgent(
+            name: "HelloAgent",
+            instructions: "You are a friendly assistant. Keep your answers brief.");
+
+    // Run the agent
+    var result = await agent.RunAsync("What is the capital of France?");
+    Console.WriteLine(result.Messages.LastOrDefault()?.Text);
+    ```
+  </Tab>
+</Tabs>
+
+## Agent Lifecycle
+
+### Non-Streaming Mode
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    # Get complete response at once
+    response = await agent.run("Hello, how are you?")
+    print(response.text)  # Full response text
+    print(response.messages)  # All messages in response
+    print(response.usage_details)  # Token usage information
+    ```
+
+    The `run()` method returns an `AgentResponse` containing:
+    - `messages` - List of response messages
+    - `text` - Concatenated text from all messages
+    - `response_id` - Unique identifier for this response
+    - `usage_details` - Token usage and cost information
+    - `value` - Structured output (if using response format)
+  </Tab>
+  <Tab title=".NET">
+    ```csharp
+    // Get complete response at once
+    var response = await agent.RunAsync("Hello, how are you?");
+    Console.WriteLine(response.Messages.LastOrDefault()?.Text);
+
+    // Access response details
+    foreach (var message in response.Messages)
+    {
+        Console.WriteLine($"{message.Role}: {message.Text}");
+    }
+    ```
+
+    The `RunAsync()` method returns an `AgentResponse` containing:
+    - `Messages` - Collection of response messages
+    - `ResponseId` - Unique identifier for this response
+    - `CreatedAt` - Response creation timestamp
+    - `Usage` - Token usage and cost information
+  </Tab>
+</Tabs>
+
+### Streaming Mode
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    # Stream tokens as they are generated
+    async for chunk in agent.run("Tell me a story", stream=True):
+        if chunk.text:
+            print(chunk.text, end="", flush=True)
+
+    # Or get final response after streaming
+    stream = agent.run("Tell me a story", stream=True)
+    async for chunk in stream:
+        print(chunk.text, end="")
+    final_response = await stream.get_final_response()
+    print(f"\n\nTotal tokens: {final_response.usage_details}")
+    ```
+
+    Streaming returns a `ResponseStream` that yields `AgentResponseUpdate` objects and provides `get_final_response()` to retrieve the complete response.
+  </Tab>
+  <Tab title=".NET">
+    ```csharp
+    // Stream tokens as they are generated
+    await foreach (var update in agent.RunStreamingAsync("Tell me a story"))
+    {
+        Console.Write(update.Text);
+    }
+    ```
+
+    Streaming returns an `IAsyncEnumerable<AgentResponseUpdate>` that yields response chunks in real-time.
+  </Tab>
+</Tabs>
+
+## Agent Configuration
+
+### Instructions
+
+Instructions define the agent's behavior, personality, and capabilities:
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    agent = client.as_agent(
+        name="CustomerSupportAgent",
+        instructions="""You are a customer support agent.
+        - Be empathetic and professional
+        - Always offer to escalate complex issues
+        - Keep responses under 3 sentences
+        """,
+    )
+    ```
+  </Tab>
+  <Tab title=".NET">
+    ```csharp
+    var agent = client.GetChatClient(deploymentName).AsAIAgent(
+        name: "CustomerSupportAgent",
+        instructions: @"You are a customer support agent.
+        - Be empathetic and professional
+        - Always offer to escalate complex issues
+        - Keep responses under 3 sentences");
+    ```
+  </Tab>
+</Tabs>
+
+### Model Parameters
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    agent = Agent(
+        client=client,
+        name="CreativeWriter",
+        instructions="You are a creative writing assistant.",
+        temperature=0.9,  # Higher creativity
+        max_tokens=2000,
+        top_p=0.95,
+    )
+
+    # Or override at runtime
+    response = await agent.run(
+        "Write a short story",
+        options={"temperature": 1.0, "max_tokens": 500}
+    )
+    ```
+
+    Available options:
+    - `temperature` (0.0-2.0) - Controls randomness
+    - `max_tokens` - Maximum response length
+    - `top_p` - Nucleus sampling parameter
+    - `frequency_penalty` - Reduces repetition
+    - `presence_penalty` - Encourages topic diversity
+    - `seed` - Reproducible outputs
+    - `stop` - Stop sequences
+  </Tab>
+  <Tab title=".NET">
+    ```csharp
+    // Configure at agent level
+    var options = new AgentRunOptions
+    {
+        Temperature = 0.9f,
+        MaxTokens = 2000,
+        TopP = 0.95f
+    };
+
+    var response = await agent.RunAsync("Write a short story", options: options);
+    ```
+
+    Available options in `AgentRunOptions`:
+    - `Temperature` (0.0-2.0) - Controls randomness
+    - `MaxTokens` - Maximum response length
+    - `TopP` - Nucleus sampling parameter
+    - `FrequencyPenalty` - Reduces repetition
+    - `PresencePenalty` - Encourages topic diversity
+    - `Seed` - Reproducible outputs
+  </Tab>
+</Tabs>
+
+## Agent Protocol
+
+<Tabs>
+  <Tab title="Python">
+    The `SupportsAgentRun` protocol defines the agent interface:
+
+    ```python
+    from agent_framework import SupportsAgentRun
+
+    class CustomAgent:
+        id: str
+        name: str | None
+        description: str | None
+
+        async def run(self, messages=None, *, stream=False, session=None, **kwargs):
+            # Your implementation
+            ...
+
+        def create_session(self, **kwargs):
+            # Your implementation
+            ...
+
+        def get_session(self, *, service_session_id, **kwargs):
+            # Your implementation
+            ...
+
+    # Verify compliance
+    agent = CustomAgent()
+    assert isinstance(agent, SupportsAgentRun)
+    ```
+
+    This protocol uses structural subtyping (duck typing), so classes don't need to explicitly inherit from it.
+  </Tab>
+  <Tab title=".NET">
+    All agents extend the `AIAgent` abstract class:
+
+    ```csharp
+    public abstract class AIAgent
+    {
+        public string Id { get; }
+        public virtual string? Name { get; }
+        public virtual string? Description { get; }
+
+        public abstract Task<AgentResponse> RunCoreAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default);
+
+        protected abstract IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default);
+
+        public abstract ValueTask<AgentSession> CreateSessionCoreAsync(
+            CancellationToken cancellationToken = default);
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Agent Properties
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    agent = Agent(
+        id="custom-agent-123",  # Optional, auto-generated if not provided
+        name="ResearchAgent",
+        description="An agent specialized in research tasks",
+        client=client,
+        additional_properties={"version": "1.0", "team": "research"},
+    )
+
+    # Access properties
+    print(agent.id)  # "custom-agent-123"
+    print(agent.name)  # "ResearchAgent"
+    print(agent.description)  # "An agent specialized in research tasks"
+    print(agent.additional_properties["version"])  # "1.0"
+    ```
+  </Tab>
+  <Tab title=".NET">
+    ```csharp
+    var agent = client.GetChatClient(deploymentName).AsAIAgent(
+        name: "ResearchAgent",
+        instructions: "You are a research specialist.");
+
+    // Access properties
+    Console.WriteLine(agent.Id);  // Auto-generated GUID
+    Console.WriteLine(agent.Name);  // "ResearchAgent"
+    Console.WriteLine(agent.Description);  // null (not set)
+    ```
+  </Tab>
+</Tabs>
+
+## Converting Agents to Tools
+
+<Tabs>
+  <Tab title="Python">
+    Agents can be converted to tools for use by other agents:
+
+    ```python
+    # Create a specialized agent
+    research_agent = client.as_agent(
+        name="ResearchAgent",
+        description="Performs web research and fact-checking",
+        tools=web_search,
+    )
+
+    # Convert to a tool
+    research_tool = research_agent.as_tool(
+        arg_name="task",
+        arg_description="Research task to perform",
+    )
+
+    # Use in another agent
+    coordinator = client.as_agent(
+        name="Coordinator",
+        instructions="Delegate research tasks to the research agent.",
+        tools=research_tool,
+    )
+
+    # Session propagation
+    research_tool = research_agent.as_tool(
+        propagate_session=True  # Share session with parent agent
+    )
+    ```
+  </Tab>
+  <Tab title=".NET">
+    In .NET, agents can be registered as tools via the function invocation system:
+
+    ```csharp
+    // Agents can be called from other agents through AIFunctionFactory
+    var researchAgent = CreateResearchAgent();
+
+    var coordinatorAgent = client.GetChatClient(deploymentName).AsAIAgent(
+        name: "Coordinator",
+        instructions: "Delegate research tasks appropriately.",
+        tools: [AIFunctionFactory.Create(
+            (string task) => researchAgent.RunAsync(task).Result.Messages.LastOrDefault()?.Text ?? "",
+            name: "ResearchAgent",
+            description: "Performs web research and fact-checking")]);
+    ```
+  </Tab>
+</Tabs>
+
+## Best Practices
+
+<Note>
+**Agent Design Tips**
+
+1. **Clear Instructions**: Be specific about the agent's role, tone, and constraints
+2. **Tool Selection**: Only provide tools the agent actually needs
+3. **Session Management**: Reuse sessions for multi-turn conversations
+4. **Error Handling**: Always handle potential exceptions in production
+5. **Observability**: Enable telemetry to monitor agent behavior
+6. **Cost Control**: Set `max_tokens` to prevent runaway costs
+</Note>
+
+<Warning>
+**Production Considerations**
+
+- Always use `approval_mode="always_require"` for tools in production
+- Implement proper authentication and authorization
+- Monitor token usage and costs
+- Add rate limiting and timeout handling
+- Test agent behavior with edge cases
+- Use middleware for security checks
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Tools" icon="wrench" href="/concepts/tools">
+    Learn how to give agents function-calling capabilities
+  </Card>
+  <Card title="Sessions" icon="comments" href="/concepts/sessions">
+    Manage multi-turn conversations with sessions
+  </Card>
+  <Card title="Middleware" icon="layer-group" href="/concepts/middleware">
+    Intercept and modify agent behavior with middleware
+  </Card>
+  <Card title="Observability" icon="chart-line" href="/concepts/observability">
+    Monitor agent performance with OpenTelemetry
+  </Card>
+</CardGroup>

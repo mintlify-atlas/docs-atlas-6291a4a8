@@ -1,0 +1,307 @@
+---
+title: Workflows
+description: API reference for Workflows in Microsoft Agent Framework Python SDK
+---
+
+# Workflows API Reference
+
+Graph-based workflow orchestration for building complex multi-agent systems.
+
+<Note>
+  The workflows API is currently being documented. This page provides an overview of the main concepts. Detailed API documentation will be added in a future update.
+</Note>
+
+## Overview
+
+Workflows enable you to orchestrate multiple agents and functions in complex patterns:
+
+- **Sequential execution**: Run agents one after another
+- **Concurrent execution**: Run multiple agents in parallel
+- **Conditional routing**: Route to different agents based on conditions
+- **Group chat**: Multiple agents collaborating in a conversation
+- **Handoffs**: Transfer control between agents
+- **Checkpointing**: Save and restore workflow state
+
+## Core Concepts
+
+### Workflow
+
+A graph-based workflow definition that connects agents and functions.
+
+```python
+from agent_framework import Workflow
+
+# Workflow structure
+workflow = Workflow(
+    nodes={...},
+    edges={...},
+    start_node="entry_point"
+)
+```
+
+### WorkflowBuilder
+
+Fluent API for building workflows.
+
+```python
+from agent_framework import WorkflowBuilder
+
+builder = WorkflowBuilder()
+workflow = (
+    builder
+    .add_node("agent1", agent1)
+    .add_node("agent2", agent2)
+    .add_edge("agent1", "agent2")
+    .build()
+)
+```
+
+### Orchestrators
+
+Pre-built workflow patterns for common use cases:
+
+- **SequentialOrchestrator**: Run agents in sequence
+- **ConcurrentOrchestrator**: Run agents in parallel
+- **GroupChatOrchestrator**: Multi-agent conversation
+- **MagenticOrchestrator**: Dynamic agent selection
+- **HandoffOrchestrator**: Agent handoff patterns
+
+## Example: Sequential Workflow
+
+```python
+from agent_framework import Agent, SequentialOrchestrator
+from agent_framework.openai import OpenAIChatClient
+
+client = OpenAIChatClient(model_id="gpt-4")
+
+# Create agents
+researcher = Agent(
+    client=client,
+    name="researcher",
+    instructions="Research the topic"
+)
+
+writer = Agent(
+    client=client,
+    name="writer",
+    instructions="Write an article based on research"
+)
+
+# Create sequential workflow
+workflow = SequentialOrchestrator(
+    agents=[researcher, writer]
+)
+
+# Run workflow
+result = await workflow.run("Write about AI agents")
+```
+
+## Example: Group Chat
+
+```python
+from agent_framework import GroupChatOrchestrator
+
+# Create multiple agents
+agents = [
+    Agent(client=client, name="analyst", instructions="Analyze data"),
+    Agent(client=client, name="strategist", instructions="Develop strategy"),
+    Agent(client=client, name="executor", instructions="Execute plan")
+]
+
+# Create group chat
+group_chat = GroupChatOrchestrator(
+    agents=agents,
+    max_turns=10
+)
+
+result = await group_chat.run("Plan a marketing campaign")
+```
+
+## Example: Conditional Routing
+
+```python
+from agent_framework import WorkflowBuilder
+
+def router(result):
+    """Route based on result."""
+    if "technical" in result.text.lower():
+        return "tech_agent"
+    else:
+        return "general_agent"
+
+workflow = (
+    WorkflowBuilder()
+    .add_node("classifier", classifier_agent)
+    .add_node("tech_agent", tech_agent)
+    .add_node("general_agent", general_agent)
+    .add_conditional_edge("classifier", router)
+    .build()
+)
+
+result = await workflow.run("Explain quantum computing")
+```
+
+## Key Features
+
+### Checkpointing
+
+Save and restore workflow state:
+
+```python
+from agent_framework import Workflow, Checkpoint
+
+# Create workflow with checkpointing
+workflow = Workflow(
+    nodes={...},
+    checkpoint_enabled=True
+)
+
+# Run and save checkpoint
+result = await workflow.run("Task")
+checkpoint = workflow.get_checkpoint()
+
+# Later, restore from checkpoint
+restored_workflow = Workflow.from_checkpoint(checkpoint)
+result = await restored_workflow.resume()
+```
+
+### State Management
+
+Workflows maintain state across agent invocations:
+
+```python
+workflow = Workflow(
+    nodes={...},
+    initial_state={"context": "value"}
+)
+
+# State is passed between agents
+result = await workflow.run("Task")
+final_state = workflow.get_state()
+```
+
+### Event Streaming
+
+Stream events as the workflow executes:
+
+```python
+async for event in workflow.run_stream("Task"):
+    if event.type == "agent_start":
+        print(f"Agent {event.agent_name} started")
+    elif event.type == "agent_complete":
+        print(f"Agent {event.agent_name} completed")
+```
+
+## Workflow Patterns
+
+### Sequential Pattern
+
+```
+Agent1 -> Agent2 -> Agent3 -> Result
+```
+
+### Parallel Pattern
+
+```
+        -> Agent1 ->
+       /            \
+Start -> Agent2 -> Merge -> Result
+       \            /
+        -> Agent3 ->
+```
+
+### Conditional Pattern
+
+```
+        -> Agent1 (if condition1)
+       /
+Router -> Agent2 (if condition2)
+       \
+        -> Agent3 (otherwise)
+```
+
+### Loop Pattern
+
+```
+Agent1 -> Condition -> Agent2
+   ^                      |
+   |______________________|  (loop back if needed)
+```
+
+## Best Practices
+
+1. **Start Simple**: Begin with sequential workflows before adding complexity
+2. **Clear Agents**: Give each agent a focused, well-defined role
+3. **State Management**: Keep state minimal and well-structured
+4. **Error Handling**: Add error handling at workflow level
+5. **Checkpointing**: Use checkpoints for long-running workflows
+6. **Testing**: Test individual agents before composing into workflows
+
+## Advanced Topics
+
+### Custom Executors
+
+Create custom execution logic:
+
+```python
+from agent_framework import Executor
+
+class CustomExecutor(Executor):
+    async def execute_node(self, node, state):
+        # Custom execution logic
+        pass
+
+workflow = Workflow(
+    nodes={...},
+    executor=CustomExecutor()
+)
+```
+
+### Workflow Composition
+
+Compose workflows from smaller workflows:
+
+```python
+# Create sub-workflows
+research_workflow = Workflow(...)
+writing_workflow = Workflow(...)
+
+# Compose into larger workflow
+main_workflow = (
+    WorkflowBuilder()
+    .add_node("research", research_workflow)
+    .add_node("writing", writing_workflow)
+    .add_edge("research", "writing")
+    .build()
+)
+```
+
+### Dynamic Workflows
+
+Build workflows dynamically at runtime:
+
+```python
+def create_workflow(task_type):
+    builder = WorkflowBuilder()
+    
+    if task_type == "research":
+        builder.add_node("agent", research_agent)
+    elif task_type == "writing":
+        builder.add_node("agent", writing_agent)
+    
+    return builder.build()
+
+workflow = create_workflow("research")
+```
+
+---
+
+<Note>
+  **Coming Soon**: Detailed API reference for all workflow classes and methods will be added in a future update. For now, refer to the source code in `agent_framework/_workflows/` for complete type signatures and implementation details.
+</Note>
+
+## Additional Resources
+
+- [Workflow Examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/workflows)
+- [Building Workflows](/workflows/building-workflows)
+- [Orchestration Patterns](/workflows/orchestration)

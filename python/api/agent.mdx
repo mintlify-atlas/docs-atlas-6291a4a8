@@ -1,0 +1,431 @@
+---
+title: Agent
+description: API reference for Agent classes in Microsoft Agent Framework Python SDK
+---
+
+# Agent API Reference
+
+Core agent classes for building AI agents with the Microsoft Agent Framework.
+
+## SupportsAgentRun
+
+Protocol defining the interface that all agents must implement.
+
+```python
+from agent_framework import SupportsAgentRun
+```
+
+### Protocol Methods
+
+<ParamField path="id" type="str" required>
+  Unique identifier for the agent
+</ParamField>
+
+<ParamField path="name" type="str | None">
+  Human-readable name of the agent
+</ParamField>
+
+<ParamField path="description" type="str | None">
+  Description of the agent's purpose and capabilities
+</ParamField>
+
+### run()
+
+Get a response from the agent.
+
+```python
+await agent.run(
+    messages="Hello, how are you?",
+    stream=False,
+    session=None,
+    **kwargs
+)
+```
+
+<ParamField path="messages" type="AgentRunInputs | None">
+  The message(s) to send to the agent. Can be a string, Message, list of Messages, or None.
+</ParamField>
+
+<ParamField path="stream" type="bool" default="False">
+  Whether to stream the response. When True, returns a ResponseStream.
+</ParamField>
+
+<ParamField path="session" type="AgentSession | None">
+  The conversation session associated with the message(s).
+</ParamField>
+
+<ParamField path="**kwargs" type="Any">
+  Additional keyword arguments passed to the agent.
+</ParamField>
+
+<ResponseField name="return" type="Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]">
+  When stream=False: An AgentResponse with the final result.
+  
+  When stream=True: A ResponseStream of AgentResponseUpdate items with `get_final_response()` for the final AgentResponse.
+</ResponseField>
+
+### create_session()
+
+Create a new conversation session.
+
+```python
+session = agent.create_session()
+```
+
+<ParamField path="**kwargs" type="Any">
+  Additional keyword arguments for session creation.
+</ParamField>
+
+<ResponseField name="return" type="AgentSession">
+  A new AgentSession instance.
+</ResponseField>
+
+### get_session()
+
+Get or create a session for a service-managed session ID.
+
+```python
+session = agent.get_session(service_session_id="session-123")
+```
+
+<ParamField path="service_session_id" type="str" required>
+  The service-managed session ID.
+</ParamField>
+
+<ParamField path="**kwargs" type="Any">
+  Additional keyword arguments.
+</ParamField>
+
+<ResponseField name="return" type="AgentSession">
+  An AgentSession instance with service_session_id set.
+</ResponseField>
+
+### Example: Custom Agent Implementation
+
+```python
+from agent_framework import SupportsAgentRun, AgentResponse, AgentSession
+
+class CustomAgent:
+    def __init__(self):
+        self.id = "custom-agent-001"
+        self.name = "Custom Agent"
+        self.description = "A fully custom agent implementation"
+    
+    async def run(self, messages=None, *, stream=False, session=None, **kwargs):
+        if stream:
+            async def _stream():
+                from agent_framework import AgentResponseUpdate
+                yield AgentResponseUpdate()
+            return _stream()
+        else:
+            return AgentResponse(messages=[], response_id="custom-response")
+    
+    def create_session(self, **kwargs):
+        return AgentSession(**kwargs)
+    
+    def get_session(self, *, service_session_id, **kwargs):
+        return AgentSession(service_session_id=service_session_id, **kwargs)
+
+# Verify protocol compatibility
+assert isinstance(CustomAgent(), SupportsAgentRun)
+```
+
+---
+
+## BaseAgent
+
+Base class for all Agent Framework agents without middleware or telemetry layers.
+
+```python
+from agent_framework import BaseAgent
+```
+
+### Constructor
+
+```python
+class SimpleAgent(BaseAgent):
+    async def run(self, messages=None, *, stream=False, session=None, **kwargs):
+        # Implementation required
+        pass
+
+agent = SimpleAgent(
+    id="agent-123",
+    name="my-agent",
+    description="A simple agent",
+    context_providers=[history_provider],
+    middleware=[logging_middleware]
+)
+```
+
+<ParamField path="id" type="str | None">
+  The unique identifier of the agent. If None, a UUID will be generated.
+</ParamField>
+
+<ParamField path="name" type="str | None">
+  The name of the agent.
+</ParamField>
+
+<ParamField path="description" type="str | None">
+  The description of the agent.
+</ParamField>
+
+<ParamField path="context_providers" type="Sequence[BaseContextProvider] | None">
+  Context providers to include during agent invocation.
+</ParamField>
+
+<ParamField path="middleware" type="Sequence[MiddlewareTypes] | None">
+  List of middleware to intercept agent operations.
+</ParamField>
+
+<ParamField path="additional_properties" type="MutableMapping[str, Any] | None">
+  Additional properties set on the agent.
+</ParamField>
+
+<ParamField path="**kwargs" type="Any">
+  Additional keyword arguments merged into additional_properties.
+</ParamField>
+
+### Methods
+
+#### as_tool()
+
+Convert the agent to a FunctionTool that can be used by other agents.
+
+```python
+tool = agent.as_tool(
+    name="research_agent",
+    description="Performs research tasks",
+    propagate_session=True
+)
+```
+
+<ParamField path="name" type="str | None">
+  The name for the tool. If None, uses the agent's name.
+</ParamField>
+
+<ParamField path="description" type="str | None">
+  The description for the tool. If None, uses the agent's description.
+</ParamField>
+
+<ParamField path="arg_name" type="str" default="task">
+  The name of the function argument.
+</ParamField>
+
+<ParamField path="arg_description" type="str | None">
+  The description for the function argument.
+</ParamField>
+
+<ParamField path="stream_callback" type="Callable[[AgentResponseUpdate], None | Awaitable[None]] | None">
+  Optional callback for streaming responses.
+</ParamField>
+
+<ParamField path="propagate_session" type="bool" default="False">
+  If True, forwards parent agent's session to sub-agent's run() call.
+</ParamField>
+
+<ResponseField name="return" type="FunctionTool">
+  A FunctionTool that wraps this agent.
+</ResponseField>
+
+---
+
+## Agent
+
+The main agent class for building AI agents with chat clients, tools, and instructions.
+
+```python
+from agent_framework import Agent
+from agent_framework.openai import OpenAIChatClient
+```
+
+### Constructor
+
+```python
+client = OpenAIChatClient(model_id="gpt-4")
+
+agent = Agent(
+    client=client,
+    instructions="You are a helpful assistant.",
+    name="assistant",
+    description="A helpful assistant",
+    tools=[get_weather],
+    default_options={
+        "temperature": 0.7,
+        "max_tokens": 500
+    }
+)
+```
+
+<ParamField path="client" type="SupportsChatGetResponse" required>
+  The chat client to use for the agent.
+</ParamField>
+
+<ParamField path="instructions" type="str | None">
+  Instructions for the agent. These are sent to the chat client as a system message.
+</ParamField>
+
+<ParamField path="id" type="str | None">
+  The unique identifier for the agent. Will be created automatically if not provided.
+</ParamField>
+
+<ParamField path="name" type="str | None">
+  The name of the agent.
+</ParamField>
+
+<ParamField path="description" type="str | None">
+  A brief description of the agent's purpose.
+</ParamField>
+
+<ParamField path="tools" type="ToolTypes | Callable | Sequence[ToolTypes | Callable] | None">
+  The tools available to the agent. Can be FunctionTool, callable functions, or tool definitions.
+</ParamField>
+
+<ParamField path="default_options" type="ChatOptions | None">
+  Default chat options including temperature, max_tokens, model_id, etc. Can be overridden at runtime.
+</ParamField>
+
+<ParamField path="context_providers" type="Sequence[BaseContextProvider] | None">
+  Context providers to include during agent invocation.
+</ParamField>
+
+<ParamField path="middleware" type="Sequence[MiddlewareTypes] | None">
+  List of middleware to intercept agent and function invocations.
+</ParamField>
+
+<ParamField path="**kwargs" type="Any">
+  Additional keyword arguments stored as additional_properties.
+</ParamField>
+
+### run()
+
+Run the agent with given messages and options.
+
+```python
+# Non-streaming
+response = await agent.run(
+    "What's the weather in Seattle?",
+    session=session,
+    options={"temperature": 0.5}
+)
+
+# Streaming
+stream = agent.run(
+    "Tell me a story",
+    stream=True
+)
+async for update in stream:
+    print(update.text, end="")
+final = await stream.get_final_response()
+```
+
+<ParamField path="messages" type="AgentRunInputs | None">
+  The messages to process. Can be string, Message, or list of Messages.
+</ParamField>
+
+<ParamField path="stream" type="bool" default="False">
+  Whether to stream the response.
+</ParamField>
+
+<ParamField path="session" type="AgentSession | None">
+  The session to use for the agent. If None, the run will be stateless.
+</ParamField>
+
+<ParamField path="tools" type="ToolTypes | Callable | Sequence[ToolTypes | Callable] | None">
+  Tools for this specific run (merged with default tools).
+</ParamField>
+
+<ParamField path="options" type="ChatOptions | None">
+  Runtime chat options including temperature, max_tokens, response_format, etc.
+</ParamField>
+
+<ParamField path="**kwargs" type="Any">
+  Additional keyword arguments passed to functions that are called.
+</ParamField>
+
+<ResponseField name="return" type="Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]">
+  When stream=False: An Awaitable[AgentResponse] containing the agent's response.
+  
+  When stream=True: A ResponseStream of AgentResponseUpdate items with `get_final_response()` for the final AgentResponse.
+</ResponseField>
+
+### Example: Basic Usage
+
+```python
+from agent_framework import Agent
+from agent_framework.openai import OpenAIChatClient
+
+client = OpenAIChatClient(model_id="gpt-4")
+agent = Agent(
+    client=client,
+    name="assistant",
+    description="A helpful assistant"
+)
+
+response = await agent.run("Hello, how are you?")
+print(response.text)
+```
+
+### Example: With Tools and Streaming
+
+```python
+from agent_framework import Agent, tool
+
+@tool
+def get_weather(location: str) -> str:
+    """Get the weather for a location."""
+    return f"The weather in {location} is sunny."
+
+agent = Agent(
+    client=client,
+    name="weather-agent",
+    instructions="You are a weather assistant.",
+    tools=[get_weather],
+    default_options={
+        "temperature": 0.7,
+        "max_tokens": 500
+    }
+)
+
+# Use streaming
+stream = agent.run("What's the weather in Paris?", stream=True)
+async for update in stream:
+    print(update.text, end="")
+final = await stream.get_final_response()
+```
+
+### Example: Typed Options for IDE Autocomplete
+
+```python
+from agent_framework import Agent
+from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
+
+client = OpenAIChatClient(model_id="gpt-4o")
+agent: Agent[OpenAIChatOptions] = Agent(
+    client=client,
+    name="reasoning-agent",
+    instructions="You are a reasoning assistant.",
+    default_options={
+        "temperature": 0.7,
+        "max_tokens": 500,
+        "reasoning_effort": "high"  # OpenAI-specific, IDE autocompletes!
+    }
+)
+
+# Runtime options also get autocomplete
+response = await agent.run(
+    "What is 25 * 47?",
+    options={
+        "temperature": 0.0,
+        "logprobs": True  # IDE autocompletes OpenAI-specific options
+    }
+)
+```
+
+### Context Manager Support
+
+```python
+# Agent supports async context manager for proper cleanup
+async with agent:
+    response = await agent.run("Hello")
+    # MCP tools and clients are automatically cleaned up
+```

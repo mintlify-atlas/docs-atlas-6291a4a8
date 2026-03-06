@@ -1,0 +1,422 @@
+---
+title: "Agents"
+description: "Learn how to create and configure agents in Python"
+---
+
+Agents are the core abstraction in the Microsoft Agent Framework. An agent wraps a chat client with instructions, tools, and middleware to create an autonomous assistant that can interact with users and perform tasks.
+
+## Creating an Agent
+
+There are two ways to create an agent:
+
+### Using `as_agent()` (Recommended)
+
+The simplest way to create an agent is using the `as_agent()` method on any chat client:
+
+```python
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
+
+agent = AzureOpenAIResponsesClient(
+    credential=AzureCliCredential()
+).as_agent(
+    name="AssistantAgent",
+    instructions="You are a helpful assistant.",
+    tools=[my_function]
+)
+
+response = await agent.run("Hello!")
+print(response.text)
+```
+
+### Using the `Agent` Class
+
+For more control, you can instantiate the `Agent` class directly:
+
+```python
+from agent_framework import Agent
+from agent_framework.openai import OpenAIResponsesClient
+
+client = OpenAIResponsesClient()
+
+agent = Agent(
+    client=client,
+    name="MyAgent",
+    instructions="You are a helpful assistant.",
+    tools=[get_weather, get_time],
+    middleware=[logging_middleware]
+)
+
+response = await agent.run("What's the weather in Seattle?")
+```
+
+## Running an Agent
+
+### Non-Streaming Response
+
+Get the complete response at once:
+
+```python
+response = await agent.run("What is 2+2?")
+print(response.text)  # "2+2 equals 4."
+print(response.usage)  # Token usage information
+```
+
+### Streaming Response
+
+Stream the response as it's generated:
+
+```python
+print("Agent: ", end="", flush=True)
+async for chunk in agent.run("Tell me a story", stream=True):
+    if chunk.text:
+        print(chunk.text, end="", flush=True)
+print()
+```
+
+## Agent Configuration
+
+### Instructions
+
+Instructions define the agent's behavior and personality:
+
+```python
+agent = client.as_agent(
+    name="WeatherAgent",
+    instructions="""
+    You are a helpful weather assistant.
+    - Always provide temperature in both Celsius and Fahrenheit
+    - Include humidity and wind speed when available
+    - Be concise and friendly
+    """
+)
+```
+
+### Tools
+
+Tools can be added at the agent level or per-run:
+
+```python
+from agent_framework import tool
+from typing import Annotated
+from pydantic import Field
+
+@tool(approval_mode="always_require")
+def get_weather(
+    location: Annotated[str, Field(description="City name")]
+) -> str:
+    """Get the weather for a location."""
+    return f"The weather in {location} is sunny."
+
+# Agent-level tools (available for all runs)
+agent = client.as_agent(
+    name="Assistant",
+    instructions="You are helpful.",
+    tools=[get_weather, get_time]  # Available for all queries
+)
+
+# Run-level tools (available only for this specific run)
+response = await agent.run(
+    "What's the weather?",
+    tools=[additional_tool]  # Merged with agent-level tools
+)
+```
+
+See the [Tools guide](/python/tools) for more details.
+
+### Middleware
+
+Middleware allows you to intercept and modify agent behavior:
+
+```python
+from agent_framework import AgentMiddleware, AgentContext
+
+class LoggingMiddleware(AgentMiddleware):
+    async def process(
+        self,
+        context: AgentContext,
+        call_next
+    ) -> None:
+        print(f"Input: {context.messages}")
+        await call_next()
+        print(f"Output: {context.result}")
+
+agent = client.as_agent(
+    name="Agent",
+    instructions="You are helpful.",
+    middleware=[LoggingMiddleware()]
+)
+```
+
+See the [Middleware guide](/python/middleware) for more details.
+
+## Sessions and Context
+
+### Using Sessions
+
+Sessions manage conversation history and state:
+
+```python
+from agent_framework import AgentSession
+
+session = AgentSession()
+
+# First interaction
+response1 = await agent.run(
+    "My name is Alice",
+    session=session
+)
+
+# Session remembers previous context
+response2 = await agent.run(
+    "What's my name?",
+    session=session
+)
+print(response2.text)  # "Your name is Alice."
+```
+
+### Custom History Providers
+
+Store conversation history in a database:
+
+```python
+from agent_framework import BaseHistoryProvider
+
+class RedisHistoryProvider(BaseHistoryProvider):
+    async def get_messages(
+        self,
+        session_id: str
+    ) -> list[Message]:
+        # Load from Redis
+        return stored_messages
+    
+    async def add_messages(
+        self,
+        session_id: str,
+        messages: list[Message]
+    ) -> None:
+        # Save to Redis
+        await redis.lpush(session_id, messages)
+
+session = AgentSession(
+    history_provider=RedisHistoryProvider()
+)
+```
+
+## Response Models and Structured Output
+
+### Structured Output with Pydantic
+
+Generate structured data with type safety:
+
+```python
+from pydantic import BaseModel
+from typing import Annotated
+from pydantic import Field
+
+class WeatherReport(BaseModel):
+    """Weather report for a location."""
+    location: str
+    temperature: Annotated[float, Field(description="Temperature in Celsius")]
+    condition: Annotated[str, Field(description="Weather condition")]
+    humidity: Annotated[int, Field(description="Humidity percentage")]
+
+agent = client.as_agent(
+    name="WeatherAgent",
+    instructions="Provide weather reports.",
+    response_model=WeatherReport
+)
+
+response = await agent.run("What's the weather in Tokyo?")
+report: WeatherReport = response.parsed
+print(f"{report.location}: {report.temperature}°C, {report.condition}")
+```
+
+## Advanced Configuration
+
+### Chat Options
+
+Override model settings per-run:
+
+```python
+response = await agent.run(
+    "Be creative!",
+    options={
+        "temperature": 0.9,
+        "max_tokens": 500,
+        "top_p": 0.95
+    }
+)
+```
+
+### Background Responses
+
+Start an agent run without blocking:
+
+```python
+import asyncio
+
+# Start the agent run in the background
+task = asyncio.create_task(agent.run("Complex task"))
+
+# Do other work
+await do_other_work()
+
+# Wait for the agent to finish
+response = await task
+```
+
+### Auto-Retry
+
+Automatically retry failed requests:
+
+```python
+from agent_framework import Agent
+
+agent = Agent(
+    client=client,
+    instructions="You are helpful.",
+    auto_retry=True,
+    max_retries=3
+)
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use descriptive instructions">
+    Provide clear, specific instructions that define the agent's role, constraints, and response format. Include examples when helpful.
+  </Accordion>
+  
+  <Accordion title="Prefer `as_agent()` for simplicity">
+    Use the `as_agent()` shorthand method for creating agents unless you need fine-grained control over the Agent class initialization.
+  </Accordion>
+  
+  <Accordion title="Enable tool approval in production">
+    Always use `approval_mode="always_require"` for tools in production. Only use `"never_require"` for samples and testing.
+  </Accordion>
+  
+  <Accordion title="Use sessions for multi-turn conversations">
+    Pass an `AgentSession` to maintain context across multiple interactions with the same user.
+  </Accordion>
+  
+  <Accordion title="Implement proper error handling">
+    Wrap agent runs in try-except blocks to handle failures gracefully:
+    
+    ```python
+    try:
+        response = await agent.run(query)
+    except Exception as e:
+        logger.error(f"Agent failed: {e}")
+        # Handle error appropriately
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## API Reference
+
+### Agent Class
+
+```python
+class Agent:
+    def __init__(
+        self,
+        *,
+        client: SupportsChatGetResponse,
+        name: str | None = None,
+        instructions: str | None = None,
+        tools: list[ToolTypes] | None = None,
+        middleware: list[MiddlewareTypes] | None = None,
+        response_model: type[BaseModel] | None = None,
+        auto_retry: bool = False,
+        max_retries: int = 3
+    )
+```
+
+### `run()` Method
+
+```python
+async def run(
+    self,
+    inputs: str | Message | list[Message],
+    *,
+    session: AgentSession | None = None,
+    tools: list[ToolTypes] | None = None,
+    options: ChatOptions | None = None,
+    stream: bool = False
+) -> AgentResponse | AsyncIterable[AgentResponseUpdate]:
+    """Run the agent with the given inputs.
+    
+    Args:
+        inputs: User message(s) to process
+        session: Optional session for conversation history
+        tools: Additional tools for this run
+        options: Override model parameters
+        stream: Enable streaming responses
+    
+    Returns:
+        AgentResponse or stream of AgentResponseUpdate
+    """
+```
+
+## Examples
+
+### Multi-Agent Interaction
+
+```python
+writer = client.as_agent(
+    name="Writer",
+    instructions="You are a content writer."
+)
+
+reviewer = client.as_agent(
+    name="Reviewer",
+    instructions="You are a content reviewer. Provide feedback."
+)
+
+# Writer creates content
+content = await writer.run("Write a tagline for an electric SUV")
+
+# Reviewer provides feedback
+feedback = await reviewer.run(
+    f"Review this tagline: {content.text}"
+)
+
+print(f"Content: {content.text}")
+print(f"Feedback: {feedback.text}")
+```
+
+### Agent with Multiple Tools
+
+```python
+from datetime import datetime
+from random import randint
+
+@tool(approval_mode="always_require")
+def get_weather(location: str) -> str:
+    """Get the weather for a location."""
+    conditions = ["sunny", "cloudy", "rainy"]
+    return f"The weather in {location} is {conditions[randint(0, 2)]}."
+
+@tool(approval_mode="always_require")
+def get_time() -> str:
+    """Get the current time."""
+    return f"The current time is {datetime.now().strftime('%H:%M')}."
+
+agent = client.as_agent(
+    name="Assistant",
+    instructions="You are a helpful assistant.",
+    tools=[get_weather, get_time]
+)
+
+response = await agent.run(
+    "What's the weather in Seattle and what time is it?"
+)
+```
+
+## Related
+
+- [Tools](/python/tools) - Add custom functionality to agents
+- [Middleware](/python/middleware) - Intercept and modify agent behavior
+- [Workflows](/python/workflows) - Orchestrate multi-agent systems
+- [Providers](/python/providers) - Connect to different AI services

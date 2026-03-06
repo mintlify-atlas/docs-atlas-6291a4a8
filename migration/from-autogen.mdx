@@ -1,0 +1,683 @@
+---
+title: "Migrating from AutoGen"
+description: "Complete guide for migrating from AutoGen to Microsoft Agent Framework"
+---
+
+This guide helps AutoGen developers move to the Microsoft Agent Framework (AF) with minimal guesswork. The frameworks share similar multi-agent primitives but differ in default behaviors, tool handling, and orchestration patterns.
+
+<Note>
+  All migration samples are available in the [autogen-migration samples directory](https://github.com/microsoft/agent-framework/tree/main/python/samples/autogen-migration).
+</Note>
+
+## Key Differences at a Glance
+
+| Concept | AutoGen | Agent Framework |
+|---------|---------|-----------------|
+| **Agent Creation** | `AssistantAgent(model_client=...)` | `client.as_agent(...)` |
+| **Tool Definition** | `FunctionTool` wrapper classes | `@tool` decorator with auto-schema |
+| **Default Behavior** | Single-turn (`max_tool_iterations=1`) | Multi-turn (continues automatically) |
+| **Session State** | Implicit via conversation context | Explicit via `agent.create_session()` |
+| **Round Robin** | `RoundRobinGroupChat` | `SequentialBuilder` |
+| **Group Chat** | `SelectorGroupChat` | `GroupChatBuilder` |
+| **Swarm Pattern** | `Swarm` with handoffs | `HandoffBuilder` |
+| **Magentic One** | `MagenticOneGroupChat` | `MagenticBuilder` |
+
+## API Mapping Reference
+
+### Basic Agent Creation
+
+<CodeGroup>
+
+```python AutoGen
+from autogen_agentchat.agents import AssistantAgent
+from autogen_ext.models.openai import OpenAIChatCompletionClient
+
+client = OpenAIChatCompletionClient(model="gpt-4.1-mini")
+agent = AssistantAgent(
+    name="assistant",
+    model_client=client,
+    system_message="You are a helpful assistant. Answer in one sentence.",
+)
+
+# Run agent (AutoGen maintains state internally)
+result = await agent.run(task="What is the capital of France?")
+print(result.messages[-1].to_text())
+```
+
+```python Agent Framework
+from agent_framework.openai import OpenAIChatClient
+
+client = OpenAIChatClient(model_id="gpt-4.1-mini")
+agent = client.as_agent(
+    name="assistant",
+    instructions="You are a helpful assistant. Answer in one sentence.",
+)
+
+# Run agent (AF agents are stateless by default)
+result = await agent.run("What is the capital of France?")
+print(result.text)
+```
+
+</CodeGroup>
+
+<Warning>
+  **Critical Default Behavior Difference**: AutoGen's `AssistantAgent` is **single-turn by default** (`max_tool_iterations=1`), while AF's `Agent` is **multi-turn** and continues tool execution automatically until completion.
+</Warning>
+
+### Tools and Functions
+
+<CodeGroup>
+
+```python AutoGen
+from autogen_core.tools import FunctionTool
+
+def get_weather(location: str) -> str:
+    """Get the weather for a location.
+
+    Args:
+        location: The city name or location.
+
+    Returns:
+        A weather description.
+    """
+    return f"The weather in {location} is sunny and 72°F."
+
+# Wrap function in FunctionTool
+weather_tool = FunctionTool(
+    func=get_weather,
+    description="Get weather information for a location",
+)
+
+agent = AssistantAgent(
+    name="assistant",
+    model_client=client,
+    tools=[weather_tool],
+    system_message="Use available tools to answer questions.",
+)
+```
+
+```python Agent Framework
+from agent_framework import tool
+
+# Direct decorator with automatic schema inference
+@tool(approval_mode="never_require")  # Use "always_require" in production
+def get_weather(location: str) -> str:
+    """Get the weather for a location.
+
+    Args:
+        location: The city name or location.
+
+    Returns:
+        A weather description.
+    """
+    return f"The weather in {location} is sunny and 72°F."
+
+agent = client.as_agent(
+    name="assistant",
+    instructions="Use available tools to answer questions.",
+    tools=[get_weather],
+)
+```
+
+</CodeGroup>
+
+<Note>
+  AutoGen uses `FunctionTool` wrappers; AF uses `@tool` decorators with **automatic schema inference** from Python type hints and docstrings.
+</Note>
+
+### Thread Management
+
+<CodeGroup>
+
+```python AutoGen
+# AutoGen maintains conversation state automatically
+result1 = await agent.run(task="What's the weather in Seattle?")
+result2 = await agent.run(task="How about Portland?")
+
+# History persists across calls
+print(f"Total messages: {len(result2.messages)}")
+```
+
+```python Agent Framework
+# AF requires explicit session for stateful conversations
+session = agent.create_session()
+
+result1 = await agent.run("What's the weather in Seattle?", session=session)
+result2 = await agent.run("How about Portland?", session=session)
+
+# Access full conversation history
+print(f"Total messages: {len(result2.messages)}")
+```
+
+</CodeGroup>
+
+### Streaming Responses
+
+<CodeGroup>
+
+```python AutoGen
+# AutoGen streaming via run_stream
+async for message in agent.run_stream(task="Tell me about AI agents"):
+    if hasattr(message, "content"):
+        print(message.content, end="")
+```
+
+```python Agent Framework
+# AF streaming with typed updates
+async for update in agent.run("Tell me about AI agents", stream=True):
+    print(update.text, end="")
+```
+
+</CodeGroup>
+
+## Orchestration Pattern Migrations
+
+### Round Robin Group Chat → Sequential Builder
+
+AutoGen's `RoundRobinGroupChat` executes agents in order. AF provides `SequentialBuilder` for the same pattern.
+
+<Tabs>
+  <Tab title="AutoGen">
+    ```python
+    from autogen_agentchat.teams import RoundRobinGroupChat
+    from autogen_agentchat.conditions import TextMentionTermination
+
+    researcher = AssistantAgent(
+        name="researcher",
+        model_client=client,
+        system_message="Provide facts and data about the topic.",
+    )
+
+    writer = AssistantAgent(
+        name="writer",
+        model_client=client,
+        system_message="Turn research into engaging content.",
+    )
+
+    editor = AssistantAgent(
+        name="editor",
+        model_client=client,
+        system_message="Review and finalize. End with APPROVED if satisfied.",
+    )
+
+    team = RoundRobinGroupChat(
+        participants=[researcher, writer, editor],
+        termination_condition=TextMentionTermination("APPROVED"),
+    )
+
+    result = await team.run(task="Create a summary about electric vehicles")
+    ```
+  </Tab>
+  <Tab title="Agent Framework">
+    ```python
+    from agent_framework.orchestrations import SequentialBuilder
+
+    researcher = client.as_agent(
+        name="researcher",
+        instructions="Provide facts and data about the topic.",
+    )
+
+    writer = client.as_agent(
+        name="writer",
+        instructions="Turn research into engaging content.",
+    )
+
+    editor = client.as_agent(
+        name="editor",
+        instructions="Review and finalize the content.",
+    )
+
+    workflow = SequentialBuilder(
+        participants=[researcher, writer, editor]
+    ).build()
+
+    async for event in workflow.run(
+        "Create a summary about electric vehicles",
+        stream=True
+    ):
+        if event.type == "output":
+            for message in event.data:
+                print(f"{message.author_name}: {message.text}")
+    ```
+  </Tab>
+</Tabs>
+
+<Accordion title="Advanced: Sequential with Cycles">
+
+For AutoGen patterns with multiple rounds, use AF's `WorkflowBuilder` with cyclic edges:
+
+```python
+from agent_framework import WorkflowBuilder, executor, AgentExecutorRequest
+
+@executor
+async def check_approval(response, context):
+    last_message = response.full_conversation[-1]
+    if "APPROVED" in last_message.text:
+        await context.yield_output("Content approved.")
+    else:
+        # Loop back to researcher for another round
+        await context.send_message(
+            AgentExecutorRequest(
+                messages=response.full_conversation,
+                should_respond=True
+            )
+        )
+
+workflow = (
+    WorkflowBuilder(start_executor=researcher)
+    .add_edge(researcher, writer)
+    .add_edge(writer, editor)
+    .add_edge(editor, check_approval)
+    .add_edge(check_approval, researcher)  # Cycle for multiple rounds
+    .build()
+)
+```
+
+</Accordion>
+
+### Selector Group Chat → Group Chat Builder
+
+AutoGen's `SelectorGroupChat` uses an LLM to choose the next speaker. AF's `GroupChatBuilder` provides the same capability.
+
+<CodeGroup>
+
+```python AutoGen
+from autogen_agentchat.teams import SelectorGroupChat
+
+researcher = AssistantAgent(name="researcher", ...)
+analyst = AssistantAgent(name="analyst", ...)
+writer = AssistantAgent(name="writer", ...)
+
+team = SelectorGroupChat(
+    participants=[researcher, analyst, writer],
+    model_client=client,  # LLM selects next speaker
+    termination_condition=MaxMessageTermination(10),
+)
+
+result = await team.run(task="Analyze market trends")
+```
+
+```python Agent Framework
+from agent_framework.orchestrations import GroupChatBuilder
+
+researcher = client.as_agent(name="researcher", ...)
+analyst = client.as_agent(name="analyst", ...)
+writer = client.as_agent(name="writer", ...)
+
+workflow = GroupChatBuilder(
+    participants=[researcher, analyst, writer],
+    orchestrator_agent=client.as_agent(),  # LLM-based speaker selection
+).build()
+
+async for event in workflow.run("Analyze market trends", stream=True):
+    if event.type == "output":
+        final_output = event.data
+```
+
+</CodeGroup>
+
+### Swarm Pattern → Handoff Builder
+
+AutoGen's `Swarm` enables agent handoffs. AF's `HandoffBuilder` provides structured handoff coordination.
+
+<Tabs>
+  <Tab title="AutoGen">
+    ```python
+    from autogen_agentchat.teams import Swarm
+    from autogen_agentchat.conditions import HandoffTermination
+
+    triage_agent = AssistantAgent(
+        name="triage",
+        model_client=client,
+        system_message=(
+            "Analyze requests and hand off to specialists. "
+            "Use TERMINATE when resolved."
+        ),
+        handoffs=["billing_agent", "technical_support", "user"],
+    )
+
+    billing_agent = AssistantAgent(
+        name="billing_agent",
+        model_client=client,
+        system_message="Handle payment questions. Handoff to triage when done.",
+        handoffs=["triage", "user"],
+    )
+
+    tech_support = AssistantAgent(
+        name="technical_support",
+        model_client=client,
+        system_message="Handle technical issues. Handoff to triage when done.",
+        handoffs=["triage", "user"],
+    )
+
+    termination = HandoffTermination(target="user") | TextMentionTermination("TERMINATE")
+    team = Swarm(
+        participants=[triage_agent, billing_agent, tech_support],
+        termination_condition=termination,
+    )
+
+    result = await team.run(task="I was charged twice")
+    ```
+  </Tab>
+  <Tab title="Agent Framework">
+    ```python
+    from agent_framework.orchestrations import HandoffBuilder
+
+    triage_agent = client.as_agent(
+        name="triage",
+        instructions=(
+            "Analyze requests and route to specialists:\n"
+            "- For billing: call handoff_to_billing_agent\n"
+            "- For technical: call handoff_to_technical_support"
+        ),
+        description="Routes requests to appropriate specialists",
+    )
+
+    billing_agent = client.as_agent(
+        name="billing_agent",
+        instructions="Handle payment and billing questions.",
+        description="Handles billing questions",
+    )
+
+    tech_support = client.as_agent(
+        name="technical_support",
+        instructions="Handle technical issues.",
+        description="Handles technical support",
+    )
+
+    workflow = (
+        HandoffBuilder(
+            name="support_handoff",
+            participants=[triage_agent, billing_agent, tech_support],
+            termination_condition=lambda conv: sum(1 for msg in conv if msg.role == "user") > 3,
+        )
+        .with_start_agent(triage_agent)
+        .add_handoff(triage_agent, [billing_agent, tech_support])
+        .build()
+    )
+
+    async for event in workflow.run("I was charged twice", stream=True):
+        if event.type == "output":
+            # Process output
+            pass
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  AF's `HandoffBuilder` supports **human-in-the-loop patterns** via `HandoffAgentUserRequest` for interactive workflows.
+</Note>
+
+### Magentic One → Magentic Builder
+
+AutoGen's `MagenticOneGroupChat` provides orchestrated multi-agent workflows. AF has a direct equivalent.
+
+<CodeGroup>
+
+```python AutoGen
+from autogen_agentchat.teams import MagenticOneGroupChat
+
+orchestrator = AssistantAgent(name="orchestrator", ...)
+web_surfer = AssistantAgent(name="web_surfer", ...)
+file_handler = AssistantAgent(name="file_handler", ...)
+coder = AssistantAgent(name="coder", ...)
+
+team = MagenticOneGroupChat(
+    participants=[web_surfer, file_handler, coder],
+    model_client=client,
+    max_turns=30,
+)
+
+result = await team.run(task="Research and summarize AI safety papers")
+```
+
+```python Agent Framework
+from agent_framework.orchestrations import MagenticBuilder
+
+orchestrator = client.as_agent(name="orchestrator", ...)
+web_surfer = client.as_agent(name="web_surfer", ...)
+file_handler = client.as_agent(name="file_handler", ...)
+coder = client.as_agent(name="coder", ...)
+
+workflow = MagenticBuilder(
+    participants=[web_surfer, file_handler, coder],
+    orchestrator_agent=orchestrator,
+).build()
+
+async for event in workflow.run(
+    "Research and summarize AI safety papers",
+    stream=True
+):
+    if event.type == "output":
+        result = event.data
+```
+
+</CodeGroup>
+
+## Agent as Tool Pattern
+
+Both frameworks support using agents as tools for hierarchical agent patterns.
+
+<Accordion title="Agent as Tool Migration">
+
+<CodeGroup>
+
+```python AutoGen
+from autogen_core.tools import FunctionTool
+
+async def research_assistant(query: str) -> str:
+    """Research assistant that performs web searches."""
+    agent = AssistantAgent(
+        name="research_assistant",
+        model_client=client,
+        tools=[web_search_tool],
+    )
+    result = await agent.run(task=query)
+    return result.messages[-1].content
+
+# Wrap agent as tool
+research_tool = FunctionTool(research_assistant, description="Research assistant")
+
+# Use in parent agent
+orchestrator = AssistantAgent(
+    name="orchestrator",
+    model_client=client,
+    tools=[research_tool],
+)
+```
+
+```python Agent Framework
+from agent_framework import tool
+
+research_agent = client.as_agent(
+    name="research_assistant",
+    instructions="Perform web searches and summarize findings.",
+    tools=[web_search_tool],
+)
+
+# Convert agent to tool using @tool decorator
+@tool(approval_mode="never_require")
+async def research_assistant(query: str) -> str:
+    """Research assistant that performs web searches."""
+    result = await research_agent.run(query)
+    return result.text
+
+# Use in parent agent
+orchestrator = client.as_agent(
+    name="orchestrator",
+    instructions="Coordinate research tasks.",
+    tools=[research_assistant],
+)
+```
+
+</CodeGroup>
+
+</Accordion>
+
+## Breaking Changes and Deprecations
+
+<Warning>
+  **Important Breaking Changes**
+</Warning>
+
+1. **Default Behavior**: AutoGen agents are single-turn by default; AF agents are multi-turn. Adjust `max_tool_iterations` expectations.
+
+2. **Thread Management**: AutoGen maintains conversation state implicitly; AF requires explicit `create_session()`.
+
+3. **Tool Wrappers**: AutoGen's `FunctionTool` must be replaced with AF's `@tool` decorator.
+
+4. **Message Types**: AutoGen uses `ChatMessage`/`TextMessage`; AF uses `Message` with `.text`, `.role`, and `.author_name`.
+
+5. **Termination Conditions**: AutoGen's `TerminationCondition` classes must be converted to AF's lambda-based or custom termination logic.
+
+6. **Handoff Messages**: AutoGen's `HandoffMessage` must be replaced with AF's `HandoffAgentUserRequest` for human-in-the-loop patterns.
+
+## Migration Checklist
+
+<Steps>
+  <Step title="Update agent construction">
+    Replace `AssistantAgent(model_client=...)` with `client.as_agent(...)`
+  </Step>
+  
+  <Step title="Convert tools">
+    Transform `FunctionTool` wrappers to `@tool` decorated functions
+  </Step>
+  
+  <Step title="Add explicit sessions">
+    Create sessions with `agent.create_session()` for stateful conversations
+  </Step>
+  
+  <Step title="Adjust default behavior expectations">
+    Account for AF's multi-turn default (vs. AutoGen's single-turn default)
+  </Step>
+  
+  <Step title="Update orchestration patterns">
+    - `RoundRobinGroupChat` → `SequentialBuilder`
+    - `SelectorGroupChat` → `GroupChatBuilder`
+    - `Swarm` → `HandoffBuilder`
+    - `MagenticOneGroupChat` → `MagenticBuilder`
+  </Step>
+  
+  <Step title="Convert termination conditions">
+    Replace AutoGen termination classes with AF's lambda-based conditions
+  </Step>
+  
+  <Step title="Test streaming behavior">
+    Update streaming logic to handle AF's `AgentResponseUpdate` events
+  </Step>
+</Steps>
+
+## Common Migration Patterns
+
+### Converting System Messages
+
+<CodeGroup>
+
+```python AutoGen
+agent = AssistantAgent(
+    name="assistant",
+    model_client=client,
+    system_message="You are a helpful assistant.",
+)
+```
+
+```python Agent Framework
+agent = client.as_agent(
+    name="assistant",
+    instructions="You are a helpful assistant.",
+)
+```
+
+</CodeGroup>
+
+### Converting Descriptions
+
+<CodeGroup>
+
+```python AutoGen
+agent = AssistantAgent(
+    name="researcher",
+    description="Collects background information",
+    system_message="Gather concise facts.",
+    model_client=client,
+)
+```
+
+```python Agent Framework
+agent = client.as_agent(
+    name="researcher",
+    description="Collects background information",
+    instructions="Gather concise facts.",
+)
+```
+
+</CodeGroup>
+
+### Converting Streaming
+
+<CodeGroup>
+
+```python AutoGen
+from autogen_agentchat.ui import Console
+
+result = await Console(team.run_stream(task="Summarize the report"))
+```
+
+```python Agent Framework
+async for event in workflow.run("Summarize the report", stream=True):
+    if event.type == "output":
+        print(event.data)
+```
+
+</CodeGroup>
+
+## Additional Resources
+
+<CardGroup cols={2}>
+  <Card title="Migration Samples" icon="code" href="https://github.com/microsoft/agent-framework/tree/main/python/samples/autogen-migration">
+    Runnable side-by-side code comparisons for all patterns
+  </Card>
+  
+  <Card title="Agent Framework Docs" icon="book" href="/introduction">
+    Complete documentation for the Agent Framework
+  </Card>
+  
+  <Card title="AutoGen Docs" icon="link" href="https://microsoft.github.io/autogen">
+    Official AutoGen documentation
+  </Card>
+  
+  <Card title="Community Support" icon="discord" href="https://discord.gg/b5zjErwbQM">
+    Get help from the community on Discord
+  </Card>
+</CardGroup>
+
+## Migration Tips
+
+<Tip>
+  **Run both implementations side-by-side** during migration. Each sample script runs AutoGen first, then AF, so you can compare outputs in a single execution.
+</Tip>
+
+- **Start with single-agent patterns** before multi-agent orchestrations
+- **Test default behavior early** — AF's multi-turn default can produce different results than AutoGen's single-turn default
+- **Use explicit sessions liberally** during development; optimize session management after achieving parity
+- **For group chats**, AF's `GroupChatBuilder` simplifies speaker selection — no need to manually track turn order
+- **Handoff patterns** are more structured in AF; use `HandoffBuilder` for clearer coordination logic
+- **Tool approval** is explicit in AF via `approval_mode`; always use `"always_require"` in production for actions
+
+## Installation Commands
+
+<CodeGroup>
+
+```bash AutoGen
+pip install "autogen-agentchat autogen-ext[openai] agent-framework"
+```
+
+```bash Agent Framework Only
+pip install agent-framework --pre
+```
+
+</CodeGroup>
+
+<Note>
+  The `--pre` flag is needed during the Agent Framework preview period. Both SDKs can coexist in the same environment for gradual migration.
+</Note>

@@ -1,0 +1,486 @@
+---
+title: 'Tools & Function Calling'
+description: 'Enable agents to call functions and use tools in the .NET SDK'
+---
+
+## Overview
+
+Tools extend agent capabilities by allowing them to execute code, query databases, call APIs, and interact with external systems. The .NET SDK provides `AITool` and `AIFunction` abstractions for defining and using tools with agents.
+
+## Core Concepts
+
+### AIFunction
+
+`AIFunction` represents a callable function that an agent can invoke. Functions are created from .NET methods with:
+
+- **Parameters**: Strongly-typed parameters with descriptions
+- **Return Values**: Typed return values
+- **Metadata**: Name, description, and parameter information
+- **Execution**: Automatic parameter binding and invocation
+
+### AITool
+
+`AITool` is the base abstraction that represents any tool an agent can use. `AIFunction` is a specific type of `AITool`.
+
+## Creating Functions
+
+### Using AIFunctionFactory
+
+The simplest way to create functions is using `AIFunctionFactory.Create()`:
+
+```csharp
+using System.ComponentModel;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+[Description("Get the weather for a given location.")]
+static string GetWeather(
+    [Description("The location to get the weather for.")] string location)
+{
+    return $"The weather in {location} is sunny with a high of 25°C.";
+}
+
+// Create an AIFunction from the method
+AIFunction weatherTool = AIFunctionFactory.Create(GetWeather);
+
+// Use it with an agent
+AIAgent agent = chatClient.AsAIAgent(
+    instructions: "You are a helpful assistant.",
+    tools: [weatherTool]);
+
+var response = await agent.RunAsync(
+    "What's the weather like in Seattle?");
+Console.WriteLine(response.Text);
+```
+
+<Note>
+  Use `[Description]` attributes from `System.ComponentModel` to provide descriptions for the function and parameters. These help the AI model understand when and how to use the function.
+</Note>
+
+### Async Functions
+
+Functions can be asynchronous:
+
+```csharp
+[Description("Search for information on the web.")]
+static async Task<string> SearchWeb(
+    [Description("The search query.")] string query,
+    CancellationToken cancellationToken = default)
+{
+    using var client = new HttpClient();
+    var result = await client.GetStringAsync(
+        $"https://api.example.com/search?q={query}",
+        cancellationToken);
+    return result;
+}
+
+AIFunction searchTool = AIFunctionFactory.Create(SearchWeb);
+```
+
+### Complex Parameters
+
+Functions can accept complex types:
+
+```csharp
+public class SearchParameters
+{
+    [Description("The search query")]
+    public string Query { get; set; } = string.Empty;
+    
+    [Description("Maximum number of results")]
+    public int MaxResults { get; set; } = 10;
+    
+    [Description("Filter by date range")]
+    public DateTime? StartDate { get; set; }
+}
+
+[Description("Search with advanced parameters.")]
+static string AdvancedSearch(SearchParameters parameters)
+{
+    return $"Searching for '{parameters.Query}' with max {parameters.MaxResults} results";
+}
+
+AIFunction tool = AIFunctionFactory.Create(AdvancedSearch);
+```
+
+## Adding Tools to Agents
+
+### At Agent Creation
+
+```csharp
+AIFunction weatherTool = AIFunctionFactory.Create(GetWeather);
+AIFunction timeTool = AIFunctionFactory.Create(GetCurrentTime);
+
+AIAgent agent = chatClient.AsAIAgent(
+    instructions: "You are a helpful assistant.",
+    tools: [weatherTool, timeTool]);
+```
+
+### Per-Request Tools
+
+Add tools for specific requests using `AgentRunOptions`:
+
+```csharp
+AIAgent agent = chatClient.AsAIAgent(
+    instructions: "You are a helpful assistant.");
+
+// Add tool for this specific request
+var options = new ChatClientAgentRunOptions(new ChatOptions()
+{
+    Tools = [AIFunctionFactory.Create(GetWeather)]
+});
+
+var response = await agent.RunAsync(
+    "What's the weather in Paris?",
+    options: options);
+```
+
+### With ChatClientAgentOptions
+
+```csharp
+AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions()
+{
+    Name = "Assistant",
+    ChatOptions = new ChatOptions()
+    {
+        Instructions = "You are a helpful assistant.",
+        Tools = [weatherTool, timeTool]
+    }
+});
+```
+
+## Function Execution
+
+### Automatic Invocation
+
+By default, when an agent decides to call a function, the framework automatically:
+
+1. Extracts parameters from the model's response
+2. Invokes the function with the parameters
+3. Returns the result to the model
+4. Continues the conversation
+
+```csharp
+AIAgent agent = chatClient.AsAIAgent(
+    instructions: "You are a helpful assistant.",
+    tools: [AIFunctionFactory.Create(GetWeather)]);
+
+// The agent will automatically call GetWeather if needed
+var response = await agent.RunAsync(
+    "What's the weather in Tokyo?");
+Console.WriteLine(response.Text);
+// Output: "The weather in Tokyo is sunny with a high of 25°C."
+```
+
+### Manual Function Approval
+
+For sensitive operations, require human approval before execution:
+
+```csharp
+public class ApprovalRequiredAIFunction : AIFunction
+{
+    private readonly AIFunction _innerFunction;
+    
+    public ApprovalRequiredAIFunction(AIFunction innerFunction)
+    {
+        _innerFunction = innerFunction;
+    }
+    
+    // Implementation that prompts for approval
+    // See middleware documentation for full implementation
+}
+
+// Wrap sensitive functions
+var deleteFunction = AIFunctionFactory.Create(DeleteFile);
+var approvalTool = new ApprovalRequiredAIFunction(deleteFunction);
+
+AIAgent agent = chatClient.AsAIAgent(
+    instructions: "You are a file management assistant.",
+    tools: [approvalTool]);
+```
+
+<Card title="Human-in-the-Loop" icon="user-check" href="/dotnet/middleware#human-approval">
+  Learn about implementing approval workflows
+</Card>
+
+## Function Examples
+
+### Database Query Function
+
+```csharp
+[Description("Query the customer database by customer ID.")]
+static async Task<string> GetCustomerInfo(
+    [Description("The customer ID to look up")] int customerId,
+    CancellationToken cancellationToken = default)
+{
+    await using var connection = new SqlConnection(connectionString);
+    await connection.OpenAsync(cancellationToken);
+    
+    var command = new SqlCommand(
+        "SELECT Name, Email FROM Customers WHERE Id = @Id",
+        connection);
+    command.Parameters.AddWithValue("@Id", customerId);
+    
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    if (await reader.ReadAsync(cancellationToken))
+    {
+        return $"Name: {reader.GetString(0)}, Email: {reader.GetString(1)}";
+    }
+    return "Customer not found.";
+}
+
+AIFunction dbTool = AIFunctionFactory.Create(GetCustomerInfo);
+```
+
+### API Call Function
+
+```csharp
+[Description("Get stock price information.")]
+static async Task<string> GetStockPrice(
+    [Description("Stock ticker symbol")] string ticker,
+    CancellationToken cancellationToken = default)
+{
+    using var client = new HttpClient();
+    client.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+    
+    var response = await client.GetStringAsync(
+        $"https://api.stockdata.com/v1/quote/{ticker}",
+        cancellationToken);
+    
+    var data = JsonSerializer.Deserialize<StockData>(response);
+    return $"Stock: {ticker}, Price: ${data.Price}, Change: {data.Change}%";
+}
+
+AIFunction stockTool = AIFunctionFactory.Create(GetStockPrice);
+```
+
+### File System Function
+
+```csharp
+[Description("List files in a directory.")]
+static string ListFiles(
+    [Description("Directory path to list")] string path,
+    [Description("File pattern (e.g., *.txt)")] string pattern = "*")
+{
+    if (!Directory.Exists(path))
+        return "Directory not found.";
+    
+    var files = Directory.GetFiles(path, pattern);
+    return $"Found {files.Length} files:\n" + 
+           string.Join("\n", files.Select(Path.GetFileName));
+}
+
+AIFunction filesTool = AIFunctionFactory.Create(ListFiles);
+```
+
+### Calculator Function
+
+```csharp
+[Description("Perform a mathematical calculation.")]
+static double Calculate(
+    [Description("First number")] double a,
+    [Description("Operation: add, subtract, multiply, divide")] string operation,
+    [Description("Second number")] double b)
+{
+    return operation.ToLower() switch
+    {
+        "add" => a + b,
+        "subtract" => a - b,
+        "multiply" => a * b,
+        "divide" => a / b,
+        _ => throw new ArgumentException($"Unknown operation: {operation}")
+    };
+}
+
+AIFunction calcTool = AIFunctionFactory.Create(Calculate);
+```
+
+## Agents as Tools
+
+Convert an agent into a tool that can be used by other agents:
+
+```csharp
+// Create specialized agents
+AIAgent weatherAgent = weatherClient.AsAIAgent(
+    name: "WeatherExpert",
+    description: "Provides detailed weather information",
+    instructions: "You are a weather expert.");
+
+AIAgent newsAgent = newsClient.AsAIAgent(
+    name: "NewsExpert",
+    description: "Provides latest news information",
+    instructions: "You are a news expert.");
+
+// Convert agents to functions
+AIFunction weatherTool = weatherAgent.AsAIFunction();
+AIFunction newsTool = newsAgent.AsAIFunction();
+
+// Create orchestrator agent that uses specialized agents as tools
+AIAgent orchestrator = chatClient.AsAIAgent(
+    name: "Orchestrator",
+    instructions: "You coordinate multiple expert agents.",
+    tools: [weatherTool, newsTool]);
+
+var response = await orchestrator.RunAsync(
+    "What's the weather in Paris and any major news there?");
+```
+
+<Card title="Multi-Agent Systems" icon="users" href="/concepts/multi-agent">
+  Learn about building multi-agent architectures
+</Card>
+
+## Function Calling with Streaming
+
+Function calls work with streaming responses:
+
+```csharp
+AIAgent agent = chatClient.AsAIAgent(
+    instructions: "You are a helpful assistant.",
+    tools: [AIFunctionFactory.Create(GetWeather)]);
+
+await foreach (var update in agent.RunStreamingAsync(
+    "What's the weather in Seattle?"))
+{
+    if (!string.IsNullOrEmpty(update.Text))
+    {
+        Console.Write(update.Text);
+    }
+}
+```
+
+## Custom Function Metadata
+
+Customize function metadata with `AIFunctionFactoryOptions`:
+
+```csharp
+var options = new AIFunctionFactoryOptions
+{
+    Name = "weather_lookup",
+    Description = "Get current weather conditions for any city worldwide"
+};
+
+AIFunction tool = AIFunctionFactory.Create(GetWeather, options);
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Provide Clear Descriptions">
+    Use descriptive `[Description]` attributes for functions and parameters. This helps the AI model understand when and how to use the function.
+    
+    ```csharp
+    [Description("Search the product catalog by name, category, or SKU.")]
+    static string SearchProducts(
+        [Description("Search term (product name, category, or SKU)")] string query,
+        [Description("Maximum number of results to return (1-100)")] int limit = 10)
+    {
+        // ...
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Handle Errors Gracefully">
+    Functions should handle errors and return meaningful messages:
+    
+    ```csharp
+    static string GetWeather(string location)
+    {
+        try
+        {
+            // Query weather service
+            return $"Weather in {location}: ...";
+        }
+        catch (Exception ex)
+        {
+            return $"Error getting weather: {ex.Message}";
+        }
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Use CancellationToken">
+    Support cancellation for long-running operations:
+    
+    ```csharp
+    static async Task<string> LongOperation(
+        string parameter,
+        CancellationToken cancellationToken = default)
+    {
+        await Task.Delay(5000, cancellationToken);
+        return "Result";
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Validate Parameters">
+    Validate parameters before execution:
+    
+    ```csharp
+    static string GetFile(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return "Error: Path cannot be empty.";
+        
+        if (!File.Exists(path))
+            return "Error: File not found.";
+        
+        return File.ReadAllText(path);
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Limit Function Scope">
+    Each function should do one thing well. Break complex operations into multiple focused functions.
+  </Accordion>
+  
+  <Accordion title="Consider Security">
+    - Validate and sanitize all inputs
+    - Implement authorization checks
+    - Require approval for destructive operations
+    - Limit file system and network access
+    - Never expose sensitive credentials
+  </Accordion>
+</AccordionGroup>
+
+## Tool Configuration
+
+### Function Choice Control
+
+Control how the model uses functions:
+
+```csharp
+var options = new ChatClientAgentRunOptions(new ChatOptions()
+{
+    Tools = [weatherTool, timeTool],
+    ToolMode = ChatToolMode.RequireAny // Force tool use
+});
+
+var response = await agent.RunAsync(query, options: options);
+```
+
+### Parallel Function Calls
+
+Some models support calling multiple functions in parallel:
+
+```csharp
+// The model may decide to call multiple functions at once
+var response = await agent.RunAsync(
+    "What's the weather in Paris and Tokyo, and what time is it in both cities?");
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Middleware" icon="layer-group" href="/dotnet/middleware">
+    Add middleware for function approval and logging
+  </Card>
+  <Card title="Workflows" icon="diagram-project" href="/dotnet/workflows">
+    Orchestrate agents with tools in workflows
+  </Card>
+  <Card title="MCP Tools" icon="plug" href="/dotnet/mcp">
+    Use Model Context Protocol tools
+  </Card>
+  <Card title="RAG" icon="database" href="/dotnet/rag">
+    Combine tools with retrieval-augmented generation
+  </Card>
+</CardGroup>

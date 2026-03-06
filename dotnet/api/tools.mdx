@@ -1,0 +1,456 @@
+---
+title: Tools & Functions
+description: API reference for AITool and AIFunction in Microsoft Agent Framework .NET SDK
+---
+
+# Tools & Functions API Reference
+
+Tools and functions that agents can invoke to extend their capabilities.
+
+## AITool
+
+Represents a tool that an agent can use, with metadata and an execution delegate.
+
+```csharp
+using Microsoft.Extensions.AI;
+```
+
+### Overview
+
+`AITool` is the base class for all tools that can be provided to agents. The most common type of tool is `AIFunction`, which represents a callable function with parameters and return types.
+
+### Properties
+
+<ParamField path="Metadata" type="AIToolMetadata" required>
+  Metadata describing the tool, including its name, description, and parameter schema.
+</ParamField>
+
+### Methods
+
+#### InvokeAsync()
+
+Invokes the tool with the provided arguments.
+
+```csharp
+public abstract Task<object?> InvokeAsync(
+    IReadOnlyDictionary<string, object?> arguments,
+    CancellationToken cancellationToken = default
+)
+```
+
+<ParamField path="arguments" type="IReadOnlyDictionary<string, object?>" required>
+  The arguments to pass to the tool.
+</ParamField>
+
+<ParamField path="cancellationToken" type="CancellationToken" default="default">
+  The cancellation token to monitor for cancellation requests.
+</ParamField>
+
+<ResponseField name="return" type="Task<object?>">
+  The result of the tool invocation.
+</ResponseField>
+
+---
+
+## AIFunction
+
+A specific type of `AITool` that represents a local function the agent can call.
+
+```csharp
+using Microsoft.Extensions.AI;
+```
+
+### Overview
+
+`AIFunction` wraps .NET methods and makes them available to agents as callable tools. Functions can have strongly-typed parameters and return values.
+
+### Properties
+
+<ParamField path="Metadata" type="AIFunctionMetadata">
+  Metadata describing the function, including name, description, parameters, and return type information.
+</ParamField>
+
+---
+
+## AIFunctionFactory
+
+Factory class for creating `AIFunction` instances from delegates and methods.
+
+```csharp
+using Microsoft.Extensions.AI;
+```
+
+### Create()
+
+Creates an `AIFunction` from a delegate or method.
+
+```csharp
+// Create from a simple delegate
+public static AIFunction Create(
+    Delegate method,
+    string? name = null,
+    string? description = null
+)
+
+// Create from a method with options
+public static AIFunction Create(
+    Delegate method,
+    AIFunctionFactoryCreateOptions? options
+)
+```
+
+<ParamField path="method" type="Delegate" required>
+  The delegate or method to wrap as an `AIFunction`.
+</ParamField>
+
+<ParamField path="name" type="string?">
+  The name of the function. If null, the method name is used.
+</ParamField>
+
+<ParamField path="description" type="string?">
+  A description of what the function does. This is provided to the AI model to help it decide when to call the function.
+</ParamField>
+
+<ParamField path="options" type="AIFunctionFactoryCreateOptions?">
+  Options for configuring the function creation, including JSON serialization settings.
+</ParamField>
+
+<ResponseField name="return" type="AIFunction">
+  An `AIFunction` instance that wraps the provided delegate.
+</ResponseField>
+
+### Example: Simple Function
+
+```csharp
+using Microsoft.Extensions.AI;
+
+AIFunction weatherFunc = AIFunctionFactory.Create(
+    (string location) => $"The weather in {location} is sunny.",
+    name: "get_weather",
+    description: "Gets the current weather for a location"
+);
+
+var chatClient = new OpenAIChatClient(
+    model: "gpt-4",
+    apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+);
+
+var agent = chatClient.AsAIAgent(
+    instructions: "You are a weather assistant.",
+    tools: new[] { weatherFunc }
+);
+
+var response = await agent.RunAsync("What's the weather in Paris?");
+Console.WriteLine(response.Text);
+```
+
+### Example: Function with Multiple Parameters
+
+```csharp
+using Microsoft.Extensions.AI;
+
+AIFunction calculateFunc = AIFunctionFactory.Create(
+    (double a, double b, string operation) => operation switch
+    {
+        "add" => a + b,
+        "subtract" => a - b,
+        "multiply" => a * b,
+        "divide" => b != 0 ? a / b : throw new DivideByZeroException(),
+        _ => throw new ArgumentException($"Unknown operation: {operation}")
+    },
+    name: "calculate",
+    description: "Performs arithmetic operations on two numbers. Operations: add, subtract, multiply, divide."
+);
+
+var agent = chatClient.AsAIAgent(
+    instructions: "You are a math assistant.",
+    tools: new[] { calculateFunc }
+);
+
+var response = await agent.RunAsync("What is 25 multiplied by 4?");
+Console.WriteLine(response.Text);
+```
+
+### Example: Async Function
+
+```csharp
+using Microsoft.Extensions.AI;
+using System.Net.Http;
+
+var httpClient = new HttpClient();
+
+AIFunction fetchFunc = AIFunctionFactory.Create(
+    async (string url) =>
+    {
+        var response = await httpClient.GetStringAsync(url);
+        return response;
+    },
+    name: "fetch_url",
+    description: "Fetches content from a URL"
+);
+
+var agent = chatClient.AsAIAgent(
+    instructions: "You can fetch web content using the fetch_url tool.",
+    tools: new[] { fetchFunc }
+);
+
+var response = await agent.RunAsync("Fetch https://example.com");
+Console.WriteLine(response.Text);
+```
+
+### Example: Function with Dependency Injection
+
+```csharp
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
+
+public class WeatherService
+{
+    public async Task<string> GetWeatherAsync(string location)
+    {
+        // Simulate API call
+        await Task.Delay(100);
+        return $"The weather in {location} is sunny and 72°F.";
+    }
+}
+
+// Setup DI
+var services = new ServiceCollection()
+    .AddSingleton<WeatherService>()
+    .BuildServiceProvider();
+
+// Create function that uses DI
+AIFunction weatherFunc = AIFunctionFactory.Create(
+    ([FromKeyedServices("weather")] WeatherService service, string location) =>
+        service.GetWeatherAsync(location),
+    name: "get_weather",
+    description: "Gets current weather for a location"
+);
+
+var chatClient = new OpenAIChatClient(
+    model: "gpt-4",
+    apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+);
+
+var agent = chatClient.AsAIAgent(
+    instructions: "You are a weather assistant.",
+    tools: new[] { weatherFunc },
+    services: services // Pass the service provider
+);
+
+var response = await agent.RunAsync("What's the weather in London?");
+Console.WriteLine(response.Text);
+```
+
+### Example: Function with Complex Return Type
+
+```csharp
+using Microsoft.Extensions.AI;
+using System.Text.Json;
+
+public record WeatherData(string Location, double Temperature, string Condition, double Humidity);
+
+AIFunction detailedWeatherFunc = AIFunctionFactory.Create(
+    (string location) => new WeatherData(
+        Location: location,
+        Temperature: 72.0,
+        Condition: "Sunny",
+        Humidity: 45.0
+    ),
+    name: "get_detailed_weather",
+    description: "Gets detailed weather information including temperature, condition, and humidity"
+);
+
+var agent = chatClient.AsAIAgent(
+    instructions: "You are a weather assistant. Provide detailed weather information.",
+    tools: new[] { detailedWeatherFunc }
+);
+
+var response = await agent.RunAsync("Give me detailed weather for Tokyo.");
+Console.WriteLine(response.Text);
+```
+
+### Example: Function from Static Method
+
+```csharp
+using Microsoft.Extensions.AI;
+using System.Reflection;
+
+public static class MathHelpers
+{
+    /// <summary>
+    /// Calculates the factorial of a number.
+    /// </summary>
+    /// <param name="n">The number to calculate factorial for</param>
+    /// <returns>The factorial of n</returns>
+    public static long Factorial(int n)
+    {
+        if (n < 0) throw new ArgumentException("Number must be non-negative");
+        if (n == 0 || n == 1) return 1;
+        long result = 1;
+        for (int i = 2; i <= n; i++)
+        {
+            result *= i;
+        }
+        return result;
+    }
+}
+
+// Create function from static method
+var factorialMethod = typeof(MathHelpers).GetMethod(nameof(MathHelpers.Factorial))!;
+AIFunction factorialFunc = AIFunctionFactory.Create(
+    factorialMethod.CreateDelegate<Func<int, long>>(),
+    name: "factorial",
+    description: "Calculates the factorial of a number"
+);
+
+var agent = chatClient.AsAIAgent(
+    instructions: "You are a math assistant.",
+    tools: new[] { factorialFunc }
+);
+
+var response = await agent.RunAsync("What is the factorial of 5?");
+Console.WriteLine(response.Text); // Should calculate 5! = 120
+```
+
+### Example: Function with Options
+
+```csharp
+using Microsoft.Extensions.AI;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+public record SearchResult(
+    [property: JsonPropertyName("title")] string Title,
+    [property: JsonPropertyName("url")] string Url,
+    [property: JsonPropertyName("snippet")] string Snippet
+);
+
+AIFunction searchFunc = AIFunctionFactory.Create(
+    (string query, int maxResults = 5) =>
+    {
+        // Simulate search
+        return new[]
+        {
+            new SearchResult("Result 1", "https://example.com/1", "Snippet 1"),
+            new SearchResult("Result 2", "https://example.com/2", "Snippet 2")
+        };
+    },
+    new AIFunctionFactoryCreateOptions
+    {
+        Name = "search",
+        Description = "Searches the web and returns results",
+        SerializerOptions = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        }
+    }
+);
+
+var agent = chatClient.AsAIAgent(
+    instructions: "You are a search assistant.",
+    tools: new[] { searchFunc }
+);
+
+var response = await agent.RunAsync("Search for quantum computing papers.");
+Console.WriteLine(response.Text);
+```
+
+### Example: Multiple Tools
+
+```csharp
+using Microsoft.Extensions.AI;
+
+// Create multiple tools
+AIFunction addFunc = AIFunctionFactory.Create(
+    (double a, double b) => a + b,
+    name: "add",
+    description: "Adds two numbers"
+);
+
+AIFunction multiplyFunc = AIFunctionFactory.Create(
+    (double a, double b) => a * b,
+    name: "multiply",
+    description: "Multiplies two numbers"
+);
+
+AIFunction powerFunc = AIFunctionFactory.Create(
+    (double baseNum, double exponent) => Math.Pow(baseNum, exponent),
+    name: "power",
+    description: "Raises a number to a power"
+);
+
+var agent = chatClient.AsAIAgent(
+    instructions: "You are a math assistant. Use the provided tools to perform calculations.",
+    tools: new[] { addFunc, multiplyFunc, powerFunc }
+);
+
+// The agent can now use multiple tools in a single conversation
+var response = await agent.RunAsync("Calculate (5 + 3) * 2, then raise that result to the power of 2.");
+Console.WriteLine(response.Text);
+```
+
+---
+
+## FunctionInvokingChatClient
+
+A delegating chat client that adds function invocation capabilities to an underlying `IChatClient`.
+
+```csharp
+using Microsoft.Extensions.AI;
+```
+
+### Overview
+
+`FunctionInvokingChatClient` is a middleware component that intercepts chat completion requests and automatically handles function/tool invocations. When the AI model requests to call a function, this client automatically invokes it and provides the result back to the model.
+
+### Constructor
+
+```csharp
+public FunctionInvokingChatClient(
+    IChatClient innerClient,
+    ILoggerFactory? loggerFactory = null,
+    IServiceProvider? services = null
+)
+```
+
+<ParamField path="innerClient" type="IChatClient" required>
+  The underlying chat client to delegate to.
+</ParamField>
+
+<ParamField path="loggerFactory" type="ILoggerFactory?">
+  Optional logger factory for logging function invocations.
+</ParamField>
+
+<ParamField path="services" type="IServiceProvider?">
+  Optional service provider for dependency injection into function parameters.
+</ParamField>
+
+### Properties
+
+<ParamField path="AdditionalTools" type="IList<AITool>?">
+  Gets or sets additional tools that should be available for invocation beyond those specified in `ChatOptions.Tools`.
+</ParamField>
+
+### Example: Manual Function Invocation Setup
+
+```csharp
+using Microsoft.Extensions.AI;
+
+var innerClient = new OpenAIChatClient(
+    model: "gpt-4",
+    apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+);
+
+// Wrap with function invocation capability
+var functionInvokingClient = new FunctionInvokingChatClient(innerClient);
+
+// Create agent (ChatClientAgent automatically adds FunctionInvokingChatClient if not present)
+var agent = functionInvokingClient.AsAIAgent(
+    instructions: "You are a helpful assistant."
+);
+```
+
+<Note>
+`ChatClientAgent` automatically wraps the provided `IChatClient` with a `FunctionInvokingChatClient` if one is not already present in the pipeline, so you typically don't need to create this manually.
+</Note>

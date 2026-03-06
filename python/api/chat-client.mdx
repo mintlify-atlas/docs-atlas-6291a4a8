@@ -1,0 +1,455 @@
+---
+title: Chat Client
+description: API reference for Chat Client classes in Microsoft Agent Framework Python SDK
+---
+
+# Chat Client API Reference
+
+Chat client classes for interacting with language models.
+
+## SupportsChatGetResponse
+
+Protocol defining the interface that all chat clients must implement.
+
+```python
+from agent_framework import SupportsChatGetResponse
+```
+
+### Protocol Properties
+
+<ParamField path="additional_properties" type="dict[str, Any]" required>
+  Dictionary for storing additional client-specific properties.
+</ParamField>
+
+### get_response()
+
+Send input and return the response.
+
+```python
+response = await client.get_response(
+    messages=[Message(role="user", text="Hello")],
+    stream=False,
+    options={"temperature": 0.7}
+)
+```
+
+<ParamField path="messages" type="Sequence[Message]" required>
+  The sequence of input messages to send.
+</ParamField>
+
+<ParamField path="stream" type="bool" default="False">
+  Whether to stream the response.
+</ParamField>
+
+<ParamField path="options" type="ChatOptions | None">
+  Chat options as a TypedDict including model_id, temperature, max_tokens, etc.
+</ParamField>
+
+<ParamField path="**kwargs" type="Any">
+  Additional chat options.
+</ParamField>
+
+<ResponseField name="return" type="Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]">
+  When stream=False: An awaitable ChatResponse from the client.
+  
+  When stream=True: A ResponseStream yielding partial updates.
+</ResponseField>
+
+### Example: Custom Chat Client
+
+```python
+from agent_framework import SupportsChatGetResponse, ChatResponse, Message
+from agent_framework import ChatResponseUpdate, ResponseStream
+
+class CustomChatClient:
+    additional_properties: dict = {}
+    
+    def get_response(self, messages, *, stream=False, options=None, **kwargs):
+        if stream:
+            async def _stream():
+                yield ChatResponseUpdate(
+                    role="assistant",
+                    contents=[{"type": "text", "text": "Hello!"}]
+                )
+            return ResponseStream(_stream())
+        else:
+            async def _response():
+                return ChatResponse(
+                    messages=[Message(role="assistant", text="Hello!")],
+                    response_id="custom"
+                )
+            return _response()
+
+# Verify protocol compatibility
+client = CustomChatClient()
+assert isinstance(client, SupportsChatGetResponse)
+```
+
+---
+
+## BaseChatClient
+
+Abstract base class for chat clients without middleware wrapping.
+
+```python
+from agent_framework import BaseChatClient, ChatResponse, Message
+```
+
+### Constructor
+
+```python
+class CustomChatClient(BaseChatClient):
+    async def _inner_get_response(self, *, messages, stream, options, **kwargs):
+        # Implementation required
+        if stream:
+            # Return AsyncIterable[ChatResponseUpdate] or ResponseStream
+            pass
+        else:
+            # Return ChatResponse
+            pass
+
+client = CustomChatClient(
+    additional_properties={"api_key": "sk-..."}
+)
+```
+
+<ParamField path="additional_properties" type="dict[str, Any] | None">
+  Additional properties for the client.
+</ParamField>
+
+<ParamField path="**kwargs" type="Any">
+  Additional keyword arguments merged into additional_properties.
+</ParamField>
+
+### Class Variables
+
+<ParamField path="OTEL_PROVIDER_NAME" type="str" default="unknown">
+  Provider name for OpenTelemetry tracing. Override in subclasses.
+</ParamField>
+
+<ParamField path="STORES_BY_DEFAULT" type="bool" default="False">
+  Whether this client stores conversation history server-side by default.
+  
+  Clients that use server-side storage (e.g., OpenAI Responses API) should override to True.
+</ParamField>
+
+### Abstract Methods
+
+#### _inner_get_response()
+
+Internal method to be implemented by derived classes.
+
+```python
+async def _inner_get_response(
+    self,
+    *,
+    messages: Sequence[Message],
+    stream: bool,
+    options: Mapping[str, Any],
+    **kwargs: Any
+) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+    """Send a chat request to the AI service."""
+    # Validate options first
+    validated_options = await self._validate_options(options)
+    
+    if stream:
+        # Return streaming response
+        async def _stream():
+            yield ChatResponseUpdate(...)
+        return self._build_response_stream(_stream())
+    else:
+        # Return non-streaming response
+        return ChatResponse(...)
+```
+
+<ParamField path="messages" type="Sequence[Message]" required>
+  The prepared chat messages to send.
+</ParamField>
+
+<ParamField path="stream" type="bool" required>
+  Whether to stream the response.
+</ParamField>
+
+<ParamField path="options" type="Mapping[str, Any]" required>
+  The options dict for the request. Call `_validate_options()` first.
+</ParamField>
+
+<ParamField path="**kwargs" type="Any">
+  Additional keyword arguments.
+</ParamField>
+
+<ResponseField name="return" type="Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]">
+  When stream=False: An Awaitable ChatResponse from the model.
+  
+  When stream=True: A ResponseStream of ChatResponseUpdate instances.
+</ResponseField>
+
+### Helper Methods
+
+#### _validate_options()
+
+Validate and normalize chat options.
+
+```python
+validated = await self._validate_options(options)
+```
+
+<ParamField path="options" type="Mapping[str, Any]" required>
+  The raw options dict.
+</ParamField>
+
+<ResponseField name="return" type="dict[str, Any]">
+  The validated and normalized options dict.
+</ResponseField>
+
+#### _build_response_stream()
+
+Create a ResponseStream with the standard finalizer.
+
+```python
+stream = self._build_response_stream(
+    _async_generator(),
+    response_format=MyModel
+)
+```
+
+<ParamField path="stream" type="AsyncIterable[ChatResponseUpdate] | Awaitable[AsyncIterable[ChatResponseUpdate]]" required>
+  The async iterable or awaitable async iterable.
+</ParamField>
+
+<ParamField path="response_format" type="type[BaseModel] | None">
+  Optional response format for structured output.
+</ParamField>
+
+<ResponseField name="return" type="ResponseStream[ChatResponseUpdate, ChatResponse]">
+  A ResponseStream with automatic finalization.
+</ResponseField>
+
+### Public Methods
+
+#### get_response()
+
+Get a response from the chat client.
+
+```python
+response = await client.get_response(
+    messages=[Message(role="user", text="Hello")],
+    stream=False,
+    options={"temperature": 0.7, "max_tokens": 500}
+)
+```
+
+<ParamField path="messages" type="Sequence[Message]" required>
+  The messages to send to the model.
+</ParamField>
+
+<ParamField path="stream" type="bool" default="False">
+  Whether to stream the response.
+</ParamField>
+
+<ParamField path="options" type="ChatOptions | None">
+  Chat options as a TypedDict.
+</ParamField>
+
+<ParamField path="**kwargs" type="Any">
+  Additional keyword arguments for function-specific parameters.
+</ParamField>
+
+<ResponseField name="return" type="Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]">
+  When streaming: a response stream of ChatResponseUpdates.
+  
+  Otherwise: an Awaitable ChatResponse.
+</ResponseField>
+
+#### as_agent()
+
+Create an Agent with this client.
+
+```python
+agent = client.as_agent(
+    name="assistant",
+    instructions="You are a helpful assistant.",
+    tools=[get_weather],
+    default_options={"temperature": 0.7}
+)
+```
+
+<ParamField path="id" type="str | None">
+  The unique identifier for the agent.
+</ParamField>
+
+<ParamField path="name" type="str | None">
+  The name of the agent.
+</ParamField>
+
+<ParamField path="description" type="str | None">
+  A brief description of the agent's purpose.
+</ParamField>
+
+<ParamField path="instructions" type="str | None">
+  Instructions sent to the chat client as a system message.
+</ParamField>
+
+<ParamField path="tools" type="ToolTypes | Callable | Sequence[ToolTypes | Callable] | None">
+  The tools to use for the agent.
+</ParamField>
+
+<ParamField path="default_options" type="ChatOptions | None">
+  Default chat options. Enables IDE autocomplete for provider-specific options.
+</ParamField>
+
+<ParamField path="context_providers" type="Sequence[BaseContextProvider] | None">
+  Context providers to include during agent invocation.
+</ParamField>
+
+<ParamField path="middleware" type="Sequence[MiddlewareTypes] | None">
+  List of middleware to intercept agent and function invocations.
+</ParamField>
+
+<ParamField path="**kwargs" type="Any">
+  Additional keyword arguments stored as additional_properties.
+</ParamField>
+
+<ResponseField name="return" type="Agent">
+  An Agent instance configured with this chat client.
+</ResponseField>
+
+### Example: Custom Chat Client Implementation
+
+```python
+from agent_framework import BaseChatClient, ChatResponse, Message
+from agent_framework import ChatResponseUpdate
+from collections.abc import AsyncIterable
+
+class CustomChatClient(BaseChatClient):
+    def __init__(self, api_key: str, **kwargs):
+        super().__init__(
+            additional_properties={"api_key": api_key},
+            **kwargs
+        )
+    
+    async def _inner_get_response(
+        self,
+        *,
+        messages,
+        stream,
+        options,
+        **kwargs
+    ):
+        # Validate options
+        validated = await self._validate_options(options)
+        
+        if stream:
+            # Streaming implementation
+            async def _stream():
+                yield ChatResponseUpdate(
+                    role="assistant",
+                    contents=[{"type": "text", "text": "Hello!"}]
+                )
+            return self._build_response_stream(_stream())
+        else:
+            # Non-streaming implementation
+            return ChatResponse(
+                messages=[Message(role="assistant", text="Hello!")],
+                response_id="custom-response"
+            )
+
+# Create and use the client
+client = CustomChatClient(api_key="sk-...")
+response = await client.get_response(
+    [Message(role="user", text="Hello, how are you?")]
+)
+
+# Or create an agent
+agent = client.as_agent(
+    name="assistant",
+    instructions="You are helpful."
+)
+```
+
+---
+
+## Tool Support Protocols
+
+Protocols for runtime checking of tool support capabilities.
+
+### SupportsCodeInterpreterTool
+
+```python
+from agent_framework import SupportsCodeInterpreterTool
+
+if isinstance(client, SupportsCodeInterpreterTool):
+    tool = client.get_code_interpreter_tool()
+    agent = Agent(client, tools=[tool])
+```
+
+### SupportsWebSearchTool
+
+```python
+from agent_framework import SupportsWebSearchTool
+
+if isinstance(client, SupportsWebSearchTool):
+    tool = client.get_web_search_tool()
+    agent = Agent(client, tools=[tool])
+```
+
+### SupportsImageGenerationTool
+
+```python
+from agent_framework import SupportsImageGenerationTool
+
+if isinstance(client, SupportsImageGenerationTool):
+    tool = client.get_image_generation_tool()
+    agent = Agent(client, tools=[tool])
+```
+
+### SupportsMCPTool
+
+```python
+from agent_framework import SupportsMCPTool
+
+if isinstance(client, SupportsMCPTool):
+    tool = client.get_mcp_tool(name="my_mcp", url="https://...")
+    agent = Agent(client, tools=[tool])
+```
+
+### SupportsFileSearchTool
+
+```python
+from agent_framework import SupportsFileSearchTool
+
+if isinstance(client, SupportsFileSearchTool):
+    tool = client.get_file_search_tool(vector_store_ids=["vs_123"])
+    agent = Agent(client, tools=[tool])
+```
+
+---
+
+## Embedding Clients
+
+### SupportsGetEmbeddings
+
+Protocol for embedding generation.
+
+```python
+from agent_framework import SupportsGetEmbeddings
+
+async def use_embeddings(client: SupportsGetEmbeddings) -> None:
+    result = await client.get_embeddings(["Hello, world!"])
+    for embedding in result:
+        print(embedding.vector)
+```
+
+### BaseEmbeddingClient
+
+Abstract base class for embedding clients.
+
+```python
+from agent_framework import BaseEmbeddingClient, Embedding, GeneratedEmbeddings
+
+class CustomEmbeddingClient(BaseEmbeddingClient):
+    async def get_embeddings(self, values, *, options=None):
+        return GeneratedEmbeddings(
+            [Embedding(vector=[0.1, 0.2, 0.3]) for _ in values]
+        )
+```

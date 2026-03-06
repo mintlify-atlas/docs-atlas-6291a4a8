@@ -1,0 +1,663 @@
+---
+title: 'Middleware'
+description: 'Enhance agents with middleware pipelines for logging, filtering, and custom behavior'
+---
+
+## Overview
+
+Middleware in the Microsoft Agent Framework .NET SDK provides a powerful way to intercept and enhance agent behavior. You can add logging, content filtering, function approval, context enrichment, and custom processing at different layers of the agent pipeline.
+
+## Middleware Layers
+
+The framework supports middleware at three levels:
+
+1. **Chat Client Level**: Intercepts IChatClient calls before they reach the AI provider
+2. **Agent Run Level**: Intercepts agent run requests and responses
+3. **Function Invocation Level**: Intercepts individual function/tool calls
+
+## Agent Run Middleware
+
+### Basic Middleware
+
+Agent run middleware intercepts the entire agent execution:
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+AIAgent baseAgent = chatClient.AsAIAgent(
+    instructions: "You are a helpful assistant.");
+
+// Add middleware
+AIAgent enhancedAgent = baseAgent
+    .AsBuilder()
+    .Use(LoggingMiddleware)
+    .Build();
+
+async Task<AgentResponse> LoggingMiddleware(
+    IEnumerable<ChatMessage> messages,
+    AgentSession? session,
+    AgentRunOptions? options,
+    AIAgent innerAgent,
+    CancellationToken cancellationToken)
+{
+    Console.WriteLine($"[{DateTime.UtcNow}] Agent run started");
+    Console.WriteLine($"Messages: {messages.Count()}");
+    
+    var response = await innerAgent.RunAsync(
+        messages, 
+        session, 
+        options, 
+        cancellationToken);
+    
+    Console.WriteLine($"[{DateTime.UtcNow}] Agent run completed");
+    Console.WriteLine($"Response: {response.Text}");
+    
+    return response;
+}
+```
+
+### PII Filtering Middleware
+
+Redact sensitive information from messages:
+
+```csharp
+using System.Text.RegularExpressions;
+
+async Task<AgentResponse> PIIMiddleware(
+    IEnumerable<ChatMessage> messages,
+    AgentSession? session,
+    AgentRunOptions? options,
+    AIAgent innerAgent,
+    CancellationToken cancellationToken)
+{
+    // Filter input messages
+    var filteredMessages = messages
+        .Select(m => new ChatMessage(m.Role, FilterPII(m.Text)))
+        .ToList();
+    
+    var response = await innerAgent.RunAsync(
+        filteredMessages,
+        session,
+        options,
+        cancellationToken);
+    
+    // Filter output messages
+    response.Messages = response.Messages
+        .Select(m => new ChatMessage(m.Role, FilterPII(m.Text)))
+        .ToList();
+    
+    return response;
+}
+
+static string FilterPII(string content)
+{
+    // Email addresses
+    content = Regex.Replace(
+        content,
+        @"\b[\w\.-]+@[\w\.-]+\.\w+\b",
+        "[REDACTED:EMAIL]");
+    
+    // Phone numbers (e.g., 123-456-7890)
+    content = Regex.Replace(
+        content,
+        @"\b\d{3}-\d{3}-\d{4}\b",
+        "[REDACTED:PHONE]");
+    
+    // Names (simplified pattern)
+    content = Regex.Replace(
+        content,
+        @"\b[A-Z][a-z]+ [A-Z][a-z]+\b",
+        "[REDACTED:NAME]");
+    
+    return content;
+}
+
+AIAgent agent = baseAgent
+    .AsBuilder()
+    .Use(PIIMiddleware, null) // null for streaming (use same for both)
+    .Build();
+```
+
+### Content Guardrails Middleware
+
+Enforce content policies:
+
+```csharp
+async Task<AgentResponse> GuardrailMiddleware(
+    IEnumerable<ChatMessage> messages,
+    AgentSession? session,
+    AgentRunOptions? options,
+    AIAgent innerAgent,
+    CancellationToken cancellationToken)
+{
+    // Check input for forbidden content
+    foreach (var message in messages)
+    {
+        if (ContainsForbiddenContent(message.Text))
+        {
+            return new AgentResponse
+            {
+                Messages = [new ChatMessage(
+                    ChatRole.Assistant,
+                    "I cannot process that request as it contains forbidden content.")]
+            };
+        }
+    }
+    
+    var response = await innerAgent.RunAsync(
+        messages,
+        session,
+        options,
+        cancellationToken);
+    
+    // Check output for forbidden content
+    foreach (var message in response.Messages)
+    {
+        if (ContainsForbiddenContent(message.Text))
+        {
+            message.Text = "[Response contained forbidden content]";
+        }
+    }
+    
+    return response;
+}
+
+static bool ContainsForbiddenContent(string content)
+{
+    string[] forbiddenKeywords = ["harmful", "illegal", "violence"];
+    return forbiddenKeywords.Any(keyword => 
+        content.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+}
+```
+
+### Chaining Multiple Middleware
+
+```csharp
+AIAgent agent = baseAgent
+    .AsBuilder()
+    .Use(LoggingMiddleware)
+    .Use(PIIMiddleware, null)
+    .Use(GuardrailMiddleware, null)
+    .Build();
+
+// Middleware executes in order:
+// Request: Logging -> PII -> Guardrail -> Inner Agent
+// Response: Inner Agent -> Guardrail -> PII -> Logging
+```
+
+## Function Invocation Middleware
+
+Intercept individual function calls:
+
+```csharp
+[Description("Get the weather for a location.")]
+static string GetWeather([Description("Location")] string location)
+    => $"Weather in {location}: Sunny, 25°C";
+
+AIAgent agent = chatClient.AsAIAgent(
+    instructions: "You are a helpful assistant.",
+    tools: [AIFunctionFactory.Create(GetWeather)]);
+
+// Add function invocation middleware
+AIAgent enhancedAgent = agent
+    .AsBuilder()
+    .Use(FunctionLoggingMiddleware)
+    .Build();
+
+async ValueTask<object?> FunctionLoggingMiddleware(
+    AIAgent agent,
+    FunctionInvocationContext context,
+    Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next,
+    CancellationToken cancellationToken)
+{
+    Console.WriteLine($"Calling function: {context.Function.Name}");
+    Console.WriteLine($"Arguments: {context.Arguments}");
+    
+    var result = await next(context, cancellationToken);
+    
+    Console.WriteLine($"Function result: {result}");
+    
+    return result;
+}
+```
+
+### Function Result Override
+
+Modify or override function results:
+
+```csharp
+async ValueTask<object?> ResultOverrideMiddleware(
+    AIAgent agent,
+    FunctionInvocationContext context,
+    Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next,
+    CancellationToken cancellationToken)
+{
+    var result = await next(context, cancellationToken);
+    
+    // Override specific function results
+    if (context.Function.Name == "GetWeather")
+    {
+        // Force different result
+        return "Weather is always sunny in the middleware!";
+    }
+    
+    return result;
+}
+```
+
+### Function Approval (Human-in-the-Loop)
+
+Require approval before executing sensitive functions:
+
+```csharp
+public class ApprovalRequiredAIFunction : AIFunction
+{
+    private readonly AIFunction _innerFunction;
+    
+    public ApprovalRequiredAIFunction(AIFunction innerFunction)
+    {
+        _innerFunction = innerFunction;
+    }
+    
+    // Metadata forwarding
+    public override AIFunctionMetadata Metadata => _innerFunction.Metadata;
+    
+    protected override async Task<object?> InvokeCoreAsync(
+        IEnumerable<KeyValuePair<string, object?>> arguments,
+        CancellationToken cancellationToken)
+    {
+        // Request approval
+        Console.WriteLine($"Function {Metadata.Name} requires approval.");
+        Console.Write("Approve? (y/n): ");
+        var input = Console.ReadLine();
+        
+        if (input?.ToLower() != "y")
+        {
+            return "Function execution denied by user.";
+        }
+        
+        return await _innerFunction.InvokeAsync(arguments, cancellationToken);
+    }
+}
+
+// Wrap sensitive functions
+[Description("Delete a file from the system.")]
+static string DeleteFile([Description("File path")] string path)
+{
+    File.Delete(path);
+    return $"Deleted {path}";
+}
+
+var deleteFunction = AIFunctionFactory.Create(DeleteFile);
+var approvalTool = new ApprovalRequiredAIFunction(deleteFunction);
+
+AIAgent agent = chatClient.AsAIAgent(
+    instructions: "You are a file manager.",
+    tools: [approvalTool]);
+```
+
+### Approval via Middleware
+
+Implement approval workflow using middleware:
+
+```csharp
+async Task<AgentResponse> ApprovalMiddleware(
+    IEnumerable<ChatMessage> messages,
+    AgentSession? session,
+    AgentRunOptions? options,
+    AIAgent innerAgent,
+    CancellationToken cancellationToken)
+{
+    var response = await innerAgent.RunAsync(
+        messages,
+        session,
+        options,
+        cancellationToken);
+    
+    // Check for approval requests
+    var approvalRequests = response.Messages
+        .SelectMany(m => m.Contents)
+        .OfType<FunctionApprovalRequestContent>()
+        .ToList();
+    
+    while (approvalRequests.Count > 0)
+    {
+        // Handle each approval request
+        var approvalResponses = new List<ChatMessage>();
+        
+        foreach (var request in approvalRequests)
+        {
+            Console.WriteLine(
+                $"Approve function call: {request.FunctionCall.Name}?");
+            Console.Write("(y/n): ");
+            var approved = Console.ReadLine()?.ToLower() == "y";
+            
+            approvalResponses.Add(new ChatMessage(
+                ChatRole.User,
+                [request.CreateResponse(approved)]));
+        }
+        
+        // Send approval responses back to agent
+        response = await innerAgent.RunAsync(
+            approvalResponses,
+            session,
+            options,
+            cancellationToken);
+        
+        // Check for more approval requests
+        approvalRequests = response.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<FunctionApprovalRequestContent>()
+            .ToList();
+    }
+    
+    return response;
+}
+```
+
+## Chat Client Middleware
+
+Intercept low-level chat client calls:
+
+```csharp
+using Microsoft.Extensions.AI;
+
+var chatClient = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new DefaultAzureCredential())
+    .GetChatClient(deploymentName)
+    .AsIChatClient()
+    .AsBuilder()
+    .Use(ChatClientLoggingMiddleware)
+    .Build();
+
+AIAgent agent = chatClient.AsAIAgent(
+    instructions: "You are a helpful assistant.");
+
+async Task<ChatResponse> ChatClientLoggingMiddleware(
+    IEnumerable<ChatMessage> messages,
+    ChatOptions? options,
+    IChatClient innerClient,
+    CancellationToken cancellationToken)
+{
+    Console.WriteLine("[ChatClient] Sending request to AI provider");
+    Console.WriteLine($"Messages: {messages.Count()}");
+    Console.WriteLine($"Model: {options?.ModelId}");
+    
+    var response = await innerClient.GetResponseAsync(
+        messages,
+        options,
+        cancellationToken);
+    
+    Console.WriteLine("[ChatClient] Received response");
+    Console.WriteLine($"Tokens used: {response.Usage?.TotalTokenCount}");
+    
+    return response;
+}
+```
+
+## Per-Request Middleware
+
+Add middleware for specific requests:
+
+```csharp
+AIAgent baseAgent = chatClient.AsAIAgent(
+    instructions: "You are a helpful assistant.");
+
+// Create per-request agent with middleware
+var perRequestOptions = new ChatClientAgentRunOptions(new ChatOptions()
+{
+    Tools = [weatherTool]
+})
+{
+    ChatClientFactory = (client) => client
+        .AsBuilder()
+        .Use(PerRequestLoggingMiddleware)
+        .Build()
+};
+
+// This middleware only applies to this specific request
+var response = await baseAgent.RunAsync(
+    "What's the weather?",
+    options: perRequestOptions);
+```
+
+## AIContextProvider Middleware
+
+Enrich agent context with additional information:
+
+```csharp
+public class DateTimeContextProvider : MessageAIContextProvider
+{
+    protected override ValueTask<IEnumerable<ChatMessage>> ProvideMessagesAsync(
+        InvokingContext context,
+        CancellationToken cancellationToken = default)
+    {
+        var message = new ChatMessage(
+            ChatRole.System,
+            $"Current date and time: {DateTimeOffset.Now}");
+        
+        return new ValueTask<IEnumerable<ChatMessage>>([message]);
+    }
+}
+
+AIAgent agent = baseAgent
+    .AsBuilder()
+    .UseAIContextProviders(new DateTimeContextProvider())
+    .Build();
+
+var response = await agent.RunAsync(
+    "Is it almost time for lunch?");
+// Agent now has access to current time
+```
+
+## Structured Output Middleware
+
+Add structured output support to agents that don't natively support it:
+
+```csharp
+public class CityInfo
+{
+    public string? Name { get; set; }
+    public int? Population { get; set; }
+}
+
+AIAgent agent = chatClient
+    .AsAIAgent(instructions: "You are a helpful assistant.")
+    .AsBuilder()
+    .UseStructuredOutput(chatClient.AsIChatClient())
+    .Build();
+
+// Request structured output
+AgentResponse<CityInfo> response = await agent.RunAsync<CityInfo>(
+    "Tell me about Paris.");
+
+CityInfo city = response.Result;
+Console.WriteLine($"City: {city.Name}, Population: {city.Population}");
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Order Matters">
+    Middleware executes in the order added. Consider the logical flow:
+    
+    ```csharp
+    agent
+        .AsBuilder()
+        .Use(ValidationMiddleware)    // Validate first
+        .Use(LoggingMiddleware)       // Then log
+        .Use(FilteringMiddleware)     // Then filter
+        .Build();
+    ```
+  </Accordion>
+  
+  <Accordion title="Handle Both Sync and Streaming">
+    When using `.Use(middleware, null)`, the same middleware handles both regular and streaming requests. Implement accordingly:
+    
+    ```csharp
+    .Use(MyMiddleware, null) // Same for both
+    // or
+    .Use(RegularMiddleware, StreamingMiddleware) // Different for each
+    ```
+  </Accordion>
+  
+  <Accordion title="Preserve Message Integrity">
+    When modifying messages, preserve important metadata:
+    
+    ```csharp
+    var newMessage = new ChatMessage(original.Role, filteredText)
+    {
+        AuthorName = original.AuthorName,
+        AdditionalProperties = original.AdditionalProperties
+    };
+    ```
+  </Accordion>
+  
+  <Accordion title="Use Cancellation Tokens">
+    Always pass cancellation tokens through the middleware chain:
+    
+    ```csharp
+    await innerAgent.RunAsync(
+        messages,
+        session,
+        options,
+        cancellationToken); // Pass it through
+    ```
+  </Accordion>
+  
+  <Accordion title="Log at Appropriate Level">
+    Choose the right middleware layer:
+    - Chat Client: Low-level provider interactions, token usage
+    - Agent Run: High-level agent behavior, conversation flow
+    - Function: Individual tool execution, parameter validation
+  </Accordion>
+  
+  <Accordion title="Avoid Heavy Processing">
+    Middleware runs on every request. Keep processing lightweight or use async operations:
+    
+    ```csharp
+    // Good: Async I/O
+    await logService.LogAsync(message);
+    
+    // Bad: Heavy CPU work
+    // ComplexAnalysis(message); // Blocks the pipeline
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Common Middleware Patterns
+
+### Rate Limiting
+
+```csharp
+private static readonly SemaphoreSlim _semaphore = new(5); // Max 5 concurrent
+
+async Task<AgentResponse> RateLimitMiddleware(
+    IEnumerable<ChatMessage> messages,
+    AgentSession? session,
+    AgentRunOptions? options,
+    AIAgent innerAgent,
+    CancellationToken cancellationToken)
+{
+    await _semaphore.WaitAsync(cancellationToken);
+    try
+    {
+        return await innerAgent.RunAsync(
+            messages,
+            session,
+            options,
+            cancellationToken);
+    }
+    finally
+    {
+        _semaphore.Release();
+    }
+}
+```
+
+### Retry Logic
+
+```csharp
+async Task<AgentResponse> RetryMiddleware(
+    IEnumerable<ChatMessage> messages,
+    AgentSession? session,
+    AgentRunOptions? options,
+    AIAgent innerAgent,
+    CancellationToken cancellationToken)
+{
+    int maxRetries = 3;
+    for (int attempt = 0; attempt < maxRetries; attempt++)
+    {
+        try
+        {
+            return await innerAgent.RunAsync(
+                messages,
+                session,
+                options,
+                cancellationToken);
+        }
+        catch (Exception ex) when (attempt < maxRetries - 1)
+        {
+            Console.WriteLine($"Attempt {attempt + 1} failed: {ex.Message}");
+            await Task.Delay(1000 * (attempt + 1), cancellationToken);
+        }
+    }
+    throw new InvalidOperationException("All retry attempts failed.");
+}
+```
+
+### Metrics Collection
+
+```csharp
+async Task<AgentResponse> MetricsMiddleware(
+    IEnumerable<ChatMessage> messages,
+    AgentSession? session,
+    AgentRunOptions? options,
+    AIAgent innerAgent,
+    CancellationToken cancellationToken)
+{
+    var stopwatch = Stopwatch.StartNew();
+    
+    try
+    {
+        var response = await innerAgent.RunAsync(
+            messages,
+            session,
+            options,
+            cancellationToken);
+        
+        stopwatch.Stop();
+        
+        // Record metrics
+        MetricsCollector.RecordLatency(stopwatch.ElapsedMilliseconds);
+        MetricsCollector.RecordSuccess();
+        
+        return response;
+    }
+    catch (Exception)
+    {
+        stopwatch.Stop();
+        MetricsCollector.RecordFailure();
+        throw;
+    }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Observability" icon="chart-line" href="/dotnet/observability">
+    Monitor agents with OpenTelemetry
+  </Card>
+  <Card title="Tools" icon="wrench" href="/dotnet/tools">
+    Combine middleware with function tools
+  </Card>
+  <Card title="Memory" icon="brain" href="/dotnet/memory">
+    Add memory with AIContextProvider
+  </Card>
+  <Card title="Workflows" icon="diagram-project" href="/dotnet/workflows">
+    Use middleware in workflow executors
+  </Card>
+</CardGroup>

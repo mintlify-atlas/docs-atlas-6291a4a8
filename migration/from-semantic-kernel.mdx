@@ -1,0 +1,532 @@
+---
+title: "Migrating from Semantic Kernel"
+description: "Complete guide for migrating from Semantic Kernel to Microsoft Agent Framework"
+---
+
+This guide helps Semantic Kernel (SK) developers move to the Microsoft Agent Framework (AF) with minimal guesswork. The frameworks share similar primitives but differ in their approach to agent orchestration, tool handling, and session management.
+
+<Note>
+  All migration samples are available in the [semantic-kernel-migration samples directory](https://github.com/microsoft/agent-framework/tree/main/python/samples/semantic-kernel-migration).
+</Note>
+
+## Key Differences at a Glance
+
+| Concept | Semantic Kernel | Agent Framework |
+|---------|----------------|-----------------|
+| **Agent Creation** | `ChatCompletionAgent(service=...)` | `client.as_agent(...)` |
+| **Tool Definition** | `@kernel_function` plugin classes | `@tool` decorator with auto-schema |
+| **Session Management** | Implicit via `ChatHistoryAgentThread` | Explicit via `agent.create_session()` |
+| **Orchestration** | `SequentialOrchestration`, `GroupChatOrchestration` | `SequentialBuilder`, `GroupChatBuilder`, workflow graphs |
+| **Streaming** | Via `get_streaming_response()` | `await agent.run(..., stream=True)` |
+| **Multi-Agent** | Process Framework, Team abstractions | Workflow builders with checkpoints & resume |
+
+## API Mapping Reference
+
+### Agent Creation
+
+<CodeGroup>
+
+```python Semantic Kernel
+from semantic_kernel.agents import ChatCompletionAgent
+from semantic_kernel.connectors.ai.open_ai import OpenAIChatCompletion
+
+agent = ChatCompletionAgent(
+    service=OpenAIChatCompletion(),
+    name="Support",
+    instructions="Answer in one sentence.",
+)
+
+# Run agent
+response = await agent.get_response(
+    messages="How do I reset my bike tire?"
+)
+print(response.message.content)
+```
+
+```python Agent Framework
+from agent_framework.openai import OpenAIChatClient
+
+# Create agent from client
+agent = OpenAIChatClient().as_agent(
+    name="Support",
+    instructions="Answer in one sentence.",
+)
+
+# Run agent
+reply = await agent.run("How do I reset my bike tire?")
+print(reply.text)
+```
+
+</CodeGroup>
+
+### Tools and Functions
+
+<CodeGroup>
+
+```python Semantic Kernel
+from semantic_kernel.functions import kernel_function
+
+class SpecialsPlugin:
+    @kernel_function(name="specials", description="List daily specials")
+    def specials(self) -> str:
+        return "Clam chowder, Cobb salad, Chai tea"
+
+# Attach plugins at construction
+agent = ChatCompletionAgent(
+    service=OpenAIChatCompletion(),
+    name="Host",
+    instructions="Answer menu questions accurately.",
+    plugins=[SpecialsPlugin()],
+)
+```
+
+```python Agent Framework
+from agent_framework import tool
+
+# Direct function decorator with auto-schema inference
+@tool(name="specials", description="List daily specials")
+async def specials() -> str:
+    return "Clam chowder, Cobb salad, Chai tea"
+
+# Pass tools as callables
+agent = OpenAIChatClient().as_agent(
+    name="Host",
+    instructions="Answer menu questions accurately.",
+    tools=[specials],
+)
+```
+
+</CodeGroup>
+
+<Warning>
+  In production, always use `approval_mode="always_require"` for tools that perform actions. The migration samples use `"never_require"` only for brevity.
+</Warning>
+
+### Session and Thread Management
+
+<CodeGroup>
+
+```python Semantic Kernel
+from semantic_kernel.agents import ChatHistoryAgentThread
+
+# SK manages thread state internally
+thread = ChatHistoryAgentThread()
+
+response = await agent.get_response(
+    messages="What soup can I order today?",
+    thread=thread,
+)
+
+# Thread persists across calls
+follow_up = await agent.get_response(
+    messages="Any vegan options?",
+    thread=thread,
+)
+```
+
+```python Agent Framework
+# AF requires explicit session creation for stateful conversations
+session = agent.create_session()
+
+response = await agent.run(
+    "What soup can I order today?",
+    session=session,
+)
+
+# Reuse session for follow-up
+follow_up = await agent.run(
+    "Any vegan options?",
+    session=session,
+)
+```
+
+</CodeGroup>
+
+<Note>
+  AF agents are **stateless by default**. Always create and pass a session when you need conversation history to persist across `run()` calls.
+</Note>
+
+### Streaming Responses
+
+<CodeGroup>
+
+```python Semantic Kernel
+async for chunk in agent.get_streaming_response(
+    messages="Tell me about electric bikes"
+):
+    print(chunk.message.content, end="")
+```
+
+```python Agent Framework
+async for update in agent.run(
+    "Tell me about electric bikes",
+    stream=True
+):
+    print(update.text, end="")
+```
+
+</CodeGroup>
+
+## Orchestration Patterns
+
+### Sequential Orchestration
+
+Run agents one after another, passing output to the next agent.
+
+<CodeGroup>
+
+```python Semantic Kernel
+from semantic_kernel.agents import SequentialOrchestration
+from semantic_kernel.agents.runtime import InProcessRuntime
+
+writer = ChatCompletionAgent(
+    name="WriterAgent",
+    instructions="Write a concise marketing sentence.",
+    service=AzureChatCompletion(credential=credential),
+)
+
+reviewer = ChatCompletionAgent(
+    name="ReviewerAgent",
+    instructions="Give brief feedback.",
+    service=AzureChatCompletion(credential=credential),
+)
+
+orchestration = SequentialOrchestration(
+    members=[writer, reviewer],
+)
+
+runtime = InProcessRuntime()
+runtime.start()
+
+result = await orchestration.invoke(
+    task="Write a tagline for a budget eBike.",
+    runtime=runtime,
+)
+```
+
+```python Agent Framework
+from agent_framework.orchestrations import SequentialBuilder
+
+writer = client.as_agent(
+    name="writer",
+    instructions="Write a concise marketing sentence.",
+)
+
+reviewer = client.as_agent(
+    name="reviewer",
+    instructions="Give brief feedback.",
+)
+
+workflow = SequentialBuilder(
+    participants=[writer, reviewer]
+).build()
+
+async for event in workflow.run(
+    "Write a tagline for a budget eBike.",
+    stream=True
+):
+    if event.type == "output":
+        conversation = event.data
+```
+
+</CodeGroup>
+
+### Group Chat Orchestration
+
+Multiple agents collaborate with an LLM-backed manager deciding who speaks next.
+
+<Tabs>
+  <Tab title="Semantic Kernel">
+    ```python
+    from semantic_kernel.agents import GroupChatOrchestration
+
+    researcher = ChatCompletionAgent(
+        name="Researcher",
+        description="Collects background information.",
+        instructions="Gather concise facts.",
+        service=AzureChatCompletion(credential=credential),
+    )
+
+    planner = ChatCompletionAgent(
+        name="Planner",
+        description="Creates actionable plans.",
+        instructions="Draft a structured action plan.",
+        service=AzureChatCompletion(credential=credential),
+    )
+
+    # Custom manager required (see samples for implementation)
+    orchestration = GroupChatOrchestration(
+        members=[researcher, planner],
+        manager=ChatCompletionGroupChatManager(
+            topic="Launch a hackathon",
+            service=AzureChatCompletion(credential=credential),
+            max_rounds=8,
+        ),
+    )
+
+    result = await orchestration.invoke(task="Plan the event", runtime=runtime)
+    ```
+  </Tab>
+  <Tab title="Agent Framework">
+    ```python
+    from agent_framework.orchestrations import GroupChatBuilder
+
+    researcher = client.as_agent(
+        name="Researcher",
+        description="Collects background information.",
+        instructions="Gather concise facts.",
+    )
+
+    planner = client.as_agent(
+        name="Planner",
+        description="Creates actionable plans.",
+        instructions="Draft a structured action plan.",
+    )
+
+    # Built-in LLM-based orchestrator
+    workflow = GroupChatBuilder(
+        participants=[researcher, planner],
+        orchestrator_agent=client.as_agent(),
+    ).build()
+
+    async for event in workflow.run("Plan the event", stream=True):
+        if event.type == "output":
+            final_message = event.data[-1]
+            print(final_message.text)
+    ```
+  </Tab>
+</Tabs>
+
+### Process Framework (Fan-out/Fan-in)
+
+<Accordion title="Semantic Kernel Process → Agent Framework Workflow">
+
+Semantic Kernel's Process Framework uses `KernelProcess` with steps and edges. Agent Framework uses `WorkflowBuilder` with custom executors.
+
+```python
+# Semantic Kernel Process
+from semantic_kernel.processes import KernelProcess, ProcessBuilder
+
+process = ProcessBuilder(name="fan_out_fan_in")
+step_a = process.add_step(StepA)
+step_b1 = process.add_step(StepB)
+step_b2 = process.add_step(StepB)
+step_c = process.add_step(StepC)
+
+process.on_input_event("start") \
+    .send_event_to(step_a.where_input_event_is("process"))
+step_a.on_event("done") \
+    .send_event_to([step_b1, step_b2])
+step_b1.on_event("done").send_event_to(step_c)
+step_b2.on_event("done").send_event_to(step_c)
+
+kernel_process = process.build()
+```
+
+```python
+# Agent Framework Workflow
+from agent_framework import WorkflowBuilder, executor
+
+@executor
+async def step_a(input_data: str, context):
+    result = await process_data(input_data)
+    await context.send_message(result, target=["step_b1", "step_b2"])
+
+@executor
+async def step_b(input_data: str, context):
+    processed = await transform(input_data)
+    await context.send_message(processed, target="step_c")
+
+@executor
+async def step_c(messages: list, context):
+    aggregated = combine(messages)
+    await context.yield_output(aggregated)
+
+workflow = (
+    WorkflowBuilder(start_executor=step_a)
+    .add_edge(step_a, step_b1)
+    .add_edge(step_a, step_b2)
+    .add_edge(step_b1, step_c)
+    .add_edge(step_b2, step_c)
+    .build()
+)
+```
+
+<Note>
+  AF workflows support **checkpoints and resume capabilities** that SK Process Framework does not. Use the workflow samples as a blueprint when modernizing complex agent graphs.
+</Note>
+
+</Accordion>
+
+## Provider-Specific Migrations
+
+### Azure AI Agent Service
+
+<CodeGroup>
+
+```python Semantic Kernel
+from azure.identity.aio import AzureCliCredential
+from semantic_kernel.agents import AzureAIAgent, AzureAIAgentSettings
+
+async with AzureCliCredential() as credential:
+    async with AzureAIAgent.create_client(credential=credential) as client:
+        settings = AzureAIAgentSettings()
+        definition = await client.agents.create_agent(
+            model=settings.model_deployment_name,
+            name="Support",
+            instructions="Answer customer questions.",
+        )
+        agent = AzureAIAgent(client=client, definition=definition)
+        response = await agent.get_response("How do I upgrade?")
+```
+
+```python Agent Framework
+from agent_framework.azure import AzureAIAgentClient
+from azure.identity.aio import AzureCliCredential
+
+async with AzureCliCredential() as credential:
+    async with AzureAIAgentClient(credential=credential).as_agent(
+        name="Support",
+        instructions="Answer customer questions.",
+    ) as agent:
+        reply = await agent.run("How do I upgrade?")
+```
+
+</CodeGroup>
+
+### OpenAI Assistants API
+
+<CodeGroup>
+
+```python Semantic Kernel
+from semantic_kernel.agents import OpenAIAssistantAgent
+
+agent = OpenAIAssistantAgent(
+    service=OpenAIAssistant(),
+    name="Assistant",
+    instructions="You are a helpful assistant.",
+    enable_code_interpreter=True,
+)
+
+response = await agent.get_response("Calculate 2^16")
+```
+
+```python Agent Framework
+from agent_framework.openai import OpenAIAssistantsClient
+
+client = OpenAIAssistantsClient()
+agent = client.as_agent(
+    name="Assistant",
+    instructions="You are a helpful assistant.",
+    tools=["code_interpreter"],
+)
+
+reply = await agent.run("Calculate 2^16")
+```
+
+</CodeGroup>
+
+### Copilot Studio
+
+<Accordion title="Copilot Studio Agent Migration">
+
+<CodeGroup>
+
+```python Semantic Kernel
+from semantic_kernel.agents import CopilotStudioAgent
+from semantic_kernel.connectors.copilot_studio import CopilotStudioSettings
+
+settings = CopilotStudioSettings()
+agent = CopilotStudioAgent(settings=settings)
+
+response = await agent.get_response("Help me file a claim")
+```
+
+```python Agent Framework
+from agent_framework.copilotstudio import CopilotStudioClient
+
+client = CopilotStudioClient()
+agent = client.as_agent()
+
+reply = await agent.run("Help me file a claim")
+```
+
+</CodeGroup>
+
+</Accordion>
+
+## Breaking Changes and Deprecations
+
+<Warning>
+  **Important Breaking Changes**
+</Warning>
+
+1. **Session Management**: AF requires explicit session creation. SK's implicit thread state won't migrate automatically.
+
+2. **Plugin System**: SK's `@kernel_function` plugins must be converted to AF's `@tool` decorators.
+
+3. **Response Types**: SK returns `ChatMessageContent` objects; AF returns `AgentResponse` with `.text`, `.messages`, and `.data` properties.
+
+4. **Orchestration Runtime**: SK's `InProcessRuntime` is not needed in AF. Workflows run directly without runtime management.
+
+5. **Streaming Format**: SK streams `ChatMessageContent` chunks; AF streams `AgentResponseUpdate` objects.
+
+## Migration Checklist
+
+<Steps>
+  <Step title="Update agent construction">
+    Replace `ChatCompletionAgent(service=...)` with `client.as_agent(...)`
+  </Step>
+  
+  <Step title="Convert plugins to tools">
+    Transform `@kernel_function` class methods to standalone `@tool` functions
+  </Step>
+  
+  <Step title="Add explicit sessions">
+    Create sessions with `agent.create_session()` for stateful conversations
+  </Step>
+  
+  <Step title="Update orchestrations">
+    Replace SK orchestrations with AF builders (`SequentialBuilder`, `GroupChatBuilder`, `WorkflowBuilder`)
+  </Step>
+  
+  <Step title="Migrate streaming code">
+    Update streaming logic to handle `AgentResponseUpdate` instead of `ChatMessageContent` chunks
+  </Step>
+  
+  <Step title="Test with sample workflows">
+    Run side-by-side comparisons using the migration samples to verify behavior parity
+  </Step>
+</Steps>
+
+## Additional Resources
+
+<CardGroup cols={2}>
+  <Card title="Migration Samples" icon="code" href="https://github.com/microsoft/agent-framework/tree/main/python/samples/semantic-kernel-migration">
+    Runnable side-by-side code comparisons for all patterns
+  </Card>
+  
+  <Card title="Agent Framework Docs" icon="book" href="/introduction">
+    Complete documentation for the Agent Framework
+  </Card>
+  
+  <Card title="Semantic Kernel Docs" icon="link" href="https://learn.microsoft.com/semantic-kernel">
+    Official Semantic Kernel documentation
+  </Card>
+  
+  <Card title="Community Support" icon="discord" href="https://discord.gg/b5zjErwbQM">
+    Get help from the community on Discord
+  </Card>
+</CardGroup>
+
+## Migration Tips
+
+<Tip>
+  **Keep both implementations open side-by-side** while migrating. The code samples are formatted to make copy/paste easy across SDKs.
+</Tip>
+
+- Start with single-agent patterns before tackling orchestrations
+- Test streaming behavior early — AF's streaming API is simpler but has different event types
+- Use `agent.create_session()` liberally during development; you can optimize session management later
+- For complex multi-agent graphs, use AF's workflow checkpointing to enable pause/resume capabilities
+- Tools map cleanly from SK plugins to AF `@tool` callables; introduce hosted tools (MCP, web search) after achieving parity

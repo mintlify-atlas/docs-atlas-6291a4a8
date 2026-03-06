@@ -1,0 +1,658 @@
+---
+title: "Azure OpenAI"
+description: "Use Azure OpenAI models with Microsoft Agent Framework"
+---
+
+# Azure OpenAI Provider
+
+Azure OpenAI Service provides REST API access to OpenAI's powerful language models including GPT-4, GPT-4o, and GPT-3.5-Turbo, with enterprise-grade security, compliance, and regional availability. The Microsoft Agent Framework provides multiple ways to work with Azure OpenAI depending on your use case.
+
+## Provider Options
+
+Azure OpenAI integration offers three main approaches:
+
+<CardGroup cols={3}>
+  <Card title="Responses Client" icon="message">
+    Direct chat completions with streaming and tools
+  </Card>
+  <Card title="Chat Client" icon="comments">
+    Chat-based interactions with conversation management
+  </Card>
+  <Card title="Azure AI Project" icon="folder-open">
+    Persistent agents with Azure AI Foundry projects
+  </Card>
+</CardGroup>
+
+## Installation
+
+<CodeGroup>
+
+```bash Python
+pip install agent-framework --pre
+# Azure OpenAI support is included in the core package
+```
+
+```bash .NET
+dotnet add package Microsoft.Agents.AI
+dotnet add package Azure.AI.OpenAI
+```
+
+</CodeGroup>
+
+## Authentication
+
+Azure OpenAI supports multiple authentication methods:
+
+### Azure CLI Credential (Recommended for Development)
+
+<CodeGroup>
+
+```python Python
+from azure.identity import AzureCliCredential
+from agent_framework.azure import AzureOpenAIResponsesClient
+
+# Run 'az login' first
+credential = AzureCliCredential()
+client = AzureOpenAIResponsesClient(credential=credential)
+```
+
+```csharp C#
+using Azure.Identity;
+using Azure.AI.OpenAI;
+using Microsoft.Agents.AI;
+
+// Run 'az login' first
+var client = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new DefaultAzureCredential()
+);
+```
+
+</CodeGroup>
+
+### Managed Identity (Recommended for Production)
+
+<CodeGroup>
+
+```python Python
+from azure.identity import ManagedIdentityCredential
+from agent_framework.azure import AzureOpenAIResponsesClient
+
+credential = ManagedIdentityCredential()
+client = AzureOpenAIResponsesClient(credential=credential)
+```
+
+```csharp C#
+using Azure.Identity;
+
+var credential = new ManagedIdentityCredential();
+var client = new AzureOpenAIClient(new Uri(endpoint), credential);
+```
+
+</CodeGroup>
+
+### API Key (Not Recommended)
+
+<CodeGroup>
+
+```python Python
+from azure.core.credentials import AzureKeyCredential
+from agent_framework.azure import AzureOpenAIResponsesClient
+
+credential = AzureKeyCredential(api_key)
+client = AzureOpenAIResponsesClient(credential=credential)
+```
+
+```csharp C#
+using Azure;
+
+var credential = new AzureKeyCredential(apiKey);
+var client = new AzureOpenAIClient(new Uri(endpoint), credential);
+```
+
+</CodeGroup>
+
+<Warning>
+API keys should only be used for local development. Always use managed identities in production for better security.
+</Warning>
+
+## Azure OpenAI Responses Client
+
+The Responses Client provides direct access to Azure OpenAI chat completions with support for streaming, function calling, and structured outputs.
+
+### Basic Usage
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
+
+async def main():
+    # Create agent with Azure OpenAI Responses Client
+    agent = AzureOpenAIResponsesClient(
+        credential=AzureCliCredential()
+    ).as_agent(
+        instructions="You are a helpful assistant.",
+    )
+    
+    # Non-streaming response
+    result = await agent.run("What is the capital of France?")
+    print(result)
+
+asyncio.run(main())
+```
+
+```csharp C#
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using OpenAI.Chat;
+
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME");
+
+var agent = new AzureOpenAIClient(
+        new Uri(endpoint),
+        new DefaultAzureCredential())
+    .GetChatClient(deploymentName)
+    .AsAIAgent(instructions: "You are a helpful assistant.");
+
+var result = await agent.RunAsync("What is the capital of France?");
+Console.WriteLine(result);
+```
+
+</CodeGroup>
+
+### Configuration
+
+<Tabs>
+  <Tab title="Environment Variables">
+    ```bash
+    AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
+    AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=gpt-4o
+    AZURE_OPENAI_API_VERSION=2024-10-01-preview
+    ```
+  </Tab>
+  <Tab title="Explicit Configuration">
+    <CodeGroup>
+    ```python Python
+    client = AzureOpenAIResponsesClient(
+        endpoint="https://your-resource.openai.azure.com",
+        deployment_name="gpt-4o",
+        api_version="2024-10-01-preview",
+        credential=AzureCliCredential(),
+    )
+    ```
+    ```csharp C#
+    var client = new AzureOpenAIClient(
+        new Uri("https://your-resource.openai.azure.com"),
+        new DefaultAzureCredential()
+    );
+    ```
+    </CodeGroup>
+  </Tab>
+</Tabs>
+
+### Streaming Responses
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
+
+async def main():
+    agent = AzureOpenAIResponsesClient(
+        credential=AzureCliCredential()
+    ).as_agent(
+        instructions="You are a helpful assistant.",
+    )
+    
+    # Streaming response
+    query = "Write a short story about AI agents."
+    print("Agent: ", end="", flush=True)
+    async for chunk in agent.run(query, stream=True):
+        if chunk.text:
+            print(chunk.text, end="", flush=True)
+    print()
+
+asyncio.run(main())
+```
+
+```csharp C#
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+
+var agent = new AzureOpenAIClient(
+        new Uri(endpoint),
+        new DefaultAzureCredential())
+    .GetChatClient(deploymentName)
+    .AsAIAgent(instructions: "You are a helpful assistant.");
+
+await foreach (var chunk in agent.RunStreamingAsync("Write a short story about AI agents."))
+{
+    if (chunk.Text != null)
+        Console.Write(chunk.Text);
+}
+```
+
+</CodeGroup>
+
+### Function Calling
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from typing import Annotated
+from agent_framework import tool
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
+from pydantic import Field
+
+@tool(approval_mode="never_require")  # Use "always_require" in production
+def get_weather(
+    location: Annotated[str, Field(description="City name")],
+) -> str:
+    """Get the weather for a location."""
+    return f"Weather in {location}: Sunny, 72°F"
+
+async def main():
+    agent = AzureOpenAIResponsesClient(
+        credential=AzureCliCredential()
+    ).as_agent(
+        instructions="You are a weather assistant.",
+        tools=[get_weather],
+    )
+    
+    result = await agent.run("What's the weather in Seattle?")
+    print(result)
+
+asyncio.run(main())
+```
+
+```csharp C#
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using System.ComponentModel;
+
+[Description("Get the weather for a location")]
+string GetWeather([Description("City name")] string location)
+{
+    return $"Weather in {location}: Sunny, 72°F";
+}
+
+var agent = new AzureOpenAIClient(
+        new Uri(endpoint),
+        new DefaultAzureCredential())
+    .GetChatClient(deploymentName)
+    .AsAIAgent(
+        instructions: "You are a weather assistant.",
+        tools: [AIFunctionFactory.Create(GetWeather)]
+    );
+
+var result = await agent.RunAsync("What's the weather in Seattle?");
+Console.WriteLine(result);
+```
+
+</CodeGroup>
+
+## Azure OpenAI Chat Client
+
+The Chat Client provides chat-based interactions with conversation management.
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from agent_framework.azure import AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
+
+async def main():
+    agent = AzureOpenAIChatClient(
+        credential=AzureCliCredential()
+    ).as_agent(
+        instructions="You are a helpful assistant.",
+    )
+    
+    result = await agent.run("Hello, how are you?")
+    print(result)
+
+asyncio.run(main())
+```
+
+```csharp C#
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+
+var agent = new AzureOpenAIClient(
+        new Uri(endpoint),
+        new DefaultAzureCredential())
+    .GetChatClient(deploymentName)
+    .AsAIAgent(instructions: "You are a helpful assistant.");
+
+var result = await agent.RunAsync("Hello, how are you?");
+Console.WriteLine(result);
+```
+
+</CodeGroup>
+
+## Azure AI Project Agent Provider
+
+For persistent agents managed through Azure AI Foundry projects, use the `AzureAIProjectAgentProvider`.
+
+### Setup
+
+1. Create an Azure AI Foundry project at [ai.azure.com](https://ai.azure.com)
+2. Get your project endpoint from the project settings
+3. Deploy a model to your project
+
+### Basic Usage
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from agent_framework.azure import AzureAIProjectAgentProvider
+from azure.identity.aio import AzureCliCredential
+
+async def main():
+    async with (
+        AzureCliCredential() as credential,
+        AzureAIProjectAgentProvider(credential=credential) as provider
+    ):
+        # Create a persistent agent
+        agent = await provider.create_agent(
+            name="WeatherAgent",
+            instructions="You are a weather assistant.",
+            tools=[...],
+        )
+        
+        # Use the agent
+        result = await agent.run("What's the weather?")
+        print(result)
+
+asyncio.run(main())
+```
+
+```csharp C#
+using Microsoft.Agents.AI.AzureAI;
+using Azure.Identity;
+
+var provider = new AzureAIProjectAgentProvider(
+    new DefaultAzureCredential(),
+    projectEndpoint
+);
+
+// Create a persistent agent
+var agent = await provider.CreateAgentAsync(
+    name: "WeatherAgent",
+    instructions: "You are a weather assistant."
+);
+
+// Use the agent
+var result = await agent.RunAsync("What's the weather?");
+Console.WriteLine(result);
+```
+
+</CodeGroup>
+
+### Configuration
+
+<Tabs>
+  <Tab title="Environment Variables">
+    ```bash
+    AZURE_AI_PROJECT_ENDPOINT=https://your-project.services.ai.azure.com
+    AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+    ```
+  </Tab>
+  <Tab title="Explicit Configuration">
+    <CodeGroup>
+    ```python Python
+    provider = AzureAIProjectAgentProvider(
+        project_endpoint="https://your-project.services.ai.azure.com",
+        model="gpt-4o",
+        credential=AzureCliCredential(),
+    )
+    ```
+    ```csharp C#
+    var provider = new AzureAIProjectAgentProvider(
+        new DefaultAzureCredential(),
+        "https://your-project.services.ai.azure.com"
+    );
+    ```
+    </CodeGroup>
+  </Tab>
+</Tabs>
+
+### Working with Existing Agents
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from agent_framework.azure import AzureAIProjectAgentProvider
+from azure.identity.aio import AzureCliCredential
+
+async def main():
+    async with (
+        AzureCliCredential() as credential,
+        AzureAIProjectAgentProvider(credential=credential) as provider
+    ):
+        # Get an existing agent by ID
+        agent = await provider.get_agent(agent_id="your-agent-id")
+        
+        # Use the agent
+        result = await agent.run("Hello!")
+        print(result)
+
+asyncio.run(main())
+```
+
+```csharp C#
+using Microsoft.Agents.AI.AzureAI;
+using Azure.Identity;
+
+var provider = new AzureAIProjectAgentProvider(
+    new DefaultAzureCredential(),
+    projectEndpoint
+);
+
+// Get an existing agent by ID
+var agent = await provider.GetAgentAsync("your-agent-id");
+
+// Use the agent
+var result = await agent.RunAsync("Hello!");
+Console.WriteLine(result);
+```
+
+</CodeGroup>
+
+## Available Models
+
+Azure OpenAI supports various model families:
+
+| Model Family | Models | Best For |
+|--------------|--------|----------|
+| GPT-4o | gpt-4o, gpt-4o-mini | Latest multimodal model, vision, function calling |
+| GPT-4 | gpt-4, gpt-4-32k | Complex reasoning, high-quality outputs |
+| GPT-3.5 | gpt-35-turbo | Fast, cost-effective chat |
+| o1/o3 | o1-preview, o1-mini, o3-mini | Advanced reasoning tasks |
+
+<Note>
+Model availability varies by region. Check the [Azure OpenAI model availability page](https://learn.microsoft.com/azure/ai-services/openai/concepts/models) for details.
+</Note>
+
+## Advanced Features
+
+### Code Interpreter
+
+Azure OpenAI Assistants support code interpreter for Python code execution:
+
+<CodeGroup>
+
+```python Python
+from agent_framework.azure import code_interpreter_tool
+
+agent = await provider.create_agent(
+    name="DataAnalyst",
+    instructions="You are a data analyst.",
+    tools=[code_interpreter_tool()],
+)
+```
+
+```csharp C#
+var agent = await provider.CreateAgentAsync(
+    name: "DataAnalyst",
+    instructions: "You are a data analyst.",
+    tools: new[] { new CodeInterpreterTool() }
+);
+```
+
+</CodeGroup>
+
+### File Search
+
+Enable file search for RAG capabilities:
+
+<CodeGroup>
+
+```python Python
+from agent_framework.azure import file_search_tool
+
+agent = await provider.create_agent(
+    name="DocumentAssistant",
+    instructions="You help with documents.",
+    tools=[file_search_tool()],
+)
+```
+
+```csharp C#
+var agent = await provider.CreateAgentAsync(
+    name: "DocumentAssistant",
+    instructions: "You help with documents.",
+    tools: new[] { new FileSearchTool() }
+);
+```
+
+</CodeGroup>
+
+### Structured Outputs
+
+<CodeGroup>
+
+```python Python
+from pydantic import BaseModel
+
+class WeatherResponse(BaseModel):
+    location: str
+    temperature: float
+    condition: str
+
+agent = client.as_agent(
+    instructions="You are a weather assistant.",
+    response_format=WeatherResponse,
+)
+```
+
+```csharp C#
+public class WeatherResponse
+{
+    public string Location { get; set; }
+    public double Temperature { get; set; }
+    public string Condition { get; set; }
+}
+
+var agent = client.AsAIAgent(
+    instructions: "You are a weather assistant.",
+    responseFormat: typeof(WeatherResponse)
+);
+```
+
+</CodeGroup>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Managed Identities in Production">
+    Always use Azure managed identities for authentication in production environments. This eliminates the need to store API keys and provides better security through Azure AD.
+    
+    ```python
+    from azure.identity import ManagedIdentityCredential
+    credential = ManagedIdentityCredential()
+    ```
+  </Accordion>
+  
+  <Accordion title="Choose the Right Client Type">
+    - Use **Responses Client** for simple chat completions and streaming
+    - Use **Chat Client** when you need conversation management
+    - Use **Azure AI Project Provider** for persistent agents with managed state
+  </Accordion>
+  
+  <Accordion title="Enable Retry Logic">
+    Azure OpenAI has rate limits. Implement retry logic with exponential backoff for production applications.
+  </Accordion>
+  
+  <Accordion title="Monitor Costs">
+    Different models have different pricing. Use GPT-4o-mini for development and testing, and reserve GPT-4o for production workloads that require maximum quality.
+  </Accordion>
+  
+  <Accordion title="Regional Deployment">
+    Deploy models in regions close to your users for better latency. Azure OpenAI is available in multiple regions worldwide.
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Authentication Errors">
+    If you see authentication errors:
+    
+    1. Run `az login` to authenticate with Azure CLI
+    2. Ensure your account has access to the Azure OpenAI resource
+    3. Check that the correct subscription is selected: `az account show`
+    4. Verify RBAC roles: You need "Cognitive Services OpenAI User" or higher
+  </Accordion>
+  
+  <Accordion title="Rate Limit Errors">
+    Azure OpenAI has rate limits based on your deployment:
+    
+    1. Check your quota in the Azure Portal
+    2. Implement exponential backoff retry logic
+    3. Consider requesting a quota increase
+    4. Use multiple deployments to distribute load
+  </Accordion>
+  
+  <Accordion title="Model Not Found">
+    If you get model not found errors:
+    
+    1. Verify the deployment name matches exactly
+    2. Check that the model is deployed in your resource
+    3. Ensure you're using the correct endpoint
+    4. Verify the API version is compatible with the model
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Function Tools" icon="wrench" href="/concepts/tools">
+    Learn how to add function calling to your agents
+  </Card>
+  <Card title="Sessions & Memory" icon="comments" href="/concepts/sessions">
+    Manage multi-turn conversations and sessions
+  </Card>
+  <Card title="Workflows" icon="diagram-project" href="/workflows/introduction">
+    Build complex multi-agent workflows
+  </Card>
+  <Card title="Deploy to Azure" icon="cloud" href="/hosting/azure-functions">
+    Deploy your agents to Azure Functions
+  </Card>
+</CardGroup>

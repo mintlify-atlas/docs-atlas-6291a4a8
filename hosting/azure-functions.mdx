@@ -1,0 +1,782 @@
+---
+title: 'Azure Functions Integration'
+description: 'Host agents as serverless functions with auto-generated HTTP endpoints'
+---
+
+## Overview
+
+The Microsoft Agent Framework integrates seamlessly with Azure Functions to host agents as serverless HTTP services. The `AgentFunctionApp` (Python) and `ConfigureDurableAgents` (C#) provide automatic endpoint generation, session management, and multi-agent hosting capabilities.
+
+## Key Features
+
+- **Auto-generated HTTP endpoints** per agent (`/api/agents/{name}/run`)
+- **Session management** for multi-turn conversations
+- **Multi-agent hosting** in a single Functions app
+- **Health checks** for monitoring
+- **Durable orchestrations** for complex workflows
+- **Reliable streaming** with response callbacks
+
+## Quick Start
+
+### Python Setup
+
+<Steps>
+  <Step title="Install Azure Functions Core Tools">
+    Install [Azure Functions Core Tools v4.x](https://learn.microsoft.com/azure/azure-functions/functions-run-local):
+    
+    ```bash
+    npm install -g azure-functions-core-tools@4 --unsafe-perm true
+    ```
+  </Step>
+  
+  <Step title="Install Package">
+    ```bash
+    pip install agent-framework-azurefunctions
+    ```
+  </Step>
+  
+  <Step title="Create Function App">
+    Create `function_app.py`:
+    
+    ```python
+    from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+    from azure.identity import AzureCliCredential
+    
+    # Create agent
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    agent = client.as_agent(
+        name="Assistant",
+        instructions="You are a helpful assistant."
+    )
+    
+    # Register with Functions app
+    app = AgentFunctionApp(agents=[agent], enable_health_check=True)
+    ```
+  </Step>
+  
+  <Step title="Configure Settings">
+    Create `local.settings.json`:
+    
+    ```json
+    {
+      "IsEncrypted": false,
+      "Values": {
+        "FUNCTIONS_WORKER_RUNTIME": "python",
+        "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+        "DURABLE_TASK_SCHEDULER_CONNECTION_STRING": "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None",
+        "TASKHUB_NAME": "default",
+        "AZURE_OPENAI_ENDPOINT": "https://your-resource.openai.azure.com/",
+        "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME": "gpt-4o-mini"
+      }
+    }
+    ```
+  </Step>
+  
+  <Step title="Create host.json">
+    ```json
+    {
+      "version": "2.0",
+      "extensionBundle": {
+        "id": "Microsoft.Azure.Functions.ExtensionBundle",
+        "version": "[4.*, 5.0.0)"
+      },
+      "extensions": {
+        "durableTask": {
+          "hubName": "%TASKHUB_NAME%"
+        }
+      }
+    }
+    ```
+  </Step>
+  
+  <Step title="Start Function Host">
+    ```bash
+    func start
+    ```
+  </Step>
+</Steps>
+
+### C# Setup
+
+<Steps>
+  <Step title="Create Function Project">
+    ```bash
+    func init MyAgentApp --worker-runtime dotnet-isolated
+    cd MyAgentApp
+    ```
+  </Step>
+  
+  <Step title="Add Package Reference">
+    ```bash
+    dotnet add package Microsoft.Agents.AI.Hosting.AzureFunctions
+    ```
+  </Step>
+  
+  <Step title="Create Program.cs">
+    ```csharp
+    using Azure.AI.OpenAI;
+    using Azure.Identity;
+    using Microsoft.Agents.AI;
+    using Microsoft.Agents.AI.Hosting.AzureFunctions;
+    using Microsoft.Azure.Functions.Worker.Builder;
+    using Microsoft.Extensions.Hosting;
+    using OpenAI.Chat;
+    
+    string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+        ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+    string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME")
+        ?? throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT_NAME is not set.");
+    
+    var client = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential());
+    AIAgent agent = client.GetChatClient(deploymentName)
+        .AsAIAgent("You are a helpful assistant.", "Assistant");
+    
+    using IHost app = FunctionsApplication
+        .CreateBuilder(args)
+        .ConfigureFunctionsWebApplication()
+        .ConfigureDurableAgents(options => options.AddAIAgent(agent))
+        .Build();
+    
+    app.Run();
+    ```
+  </Step>
+  
+  <Step title="Configure Settings">
+    Create `local.settings.json`:
+    
+    ```json
+    {
+      "IsEncrypted": false,
+      "Values": {
+        "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+        "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+        "DURABLE_TASK_SCHEDULER_CONNECTION_STRING": "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None",
+        "AZURE_OPENAI_ENDPOINT": "https://your-resource.openai.azure.com/",
+        "AZURE_OPENAI_DEPLOYMENT_NAME": "gpt-4o-mini"
+      }
+    }
+    ```
+  </Step>
+  
+  <Step title="Start Function Host">
+    ```bash
+    func start
+    ```
+  </Step>
+</Steps>
+
+## Single Agent Hosting
+
+Host a single agent with automatic HTTP endpoint generation:
+
+<CodeGroup>
+```python function_app.py
+from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Create agent with specific instructions
+def _create_agent():
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        name="Joker",
+        instructions="You are good at telling jokes.",
+    )
+
+# Register agent with Functions app
+app = AgentFunctionApp(
+    agents=[_create_agent()],
+    enable_health_check=True,
+    max_poll_retries=50
+)
+```
+
+```csharp Program.cs
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Hosting.AzureFunctions;
+using Microsoft.Azure.Functions.Worker.Builder;
+using Microsoft.Extensions.Hosting;
+using OpenAI.Chat;
+
+string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME")
+    ?? throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT_NAME is not set.");
+
+var client = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential());
+AIAgent agent = client.GetChatClient(deploymentName)
+    .AsAIAgent("You are good at telling jokes.", "Joker");
+
+using IHost app = FunctionsApplication
+    .CreateBuilder(args)
+    .ConfigureFunctionsWebApplication()
+    .ConfigureDurableAgents(options => 
+        options.AddAIAgent(agent, timeToLive: TimeSpan.FromHours(1)))
+    .Build();
+
+app.Run();
+```
+</CodeGroup>
+
+### Testing the Agent
+
+```bash
+# Plain text request
+curl -X POST http://localhost:7071/api/agents/Joker/run \
+  -H "Content-Type: text/plain" \
+  -d "Tell me a joke about cloud computing."
+
+# JSON request with session
+curl -X POST http://localhost:7071/api/agents/Joker/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Tell me a joke",
+    "thread_id": "user-123"
+  }'
+```
+
+### Response Format
+
+**Synchronous (default):**
+
+```http
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+x-ms-thread-id: 4f205157170244bfbd80209df383757e
+
+Why did the cloud break up with the server?
+Because it found someone more "uplifting"!
+```
+
+**Asynchronous (with `wait_for_response: false`):**
+
+```http
+HTTP/1.1 202 Accepted
+Content-Type: application/json
+
+{
+  "status": "accepted",
+  "response": "Agent request accepted",
+  "message": "Tell me a joke about cloud computing.",
+  "thread_id": "<guid>",
+  "correlation_id": "<guid>"
+}
+```
+
+## Multi-Agent Hosting
+
+Host multiple specialized agents in a single Functions app:
+
+<CodeGroup>
+```python function_app.py
+from agent_framework import tool
+from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
+
+# Define tools
+@tool(approval_mode="never_require")
+def get_weather(location: str) -> dict:
+    """Get current weather for a location."""
+    return {
+        "location": location,
+        "temperature": 72,
+        "conditions": "Sunny"
+    }
+
+@tool(approval_mode="never_require")
+def calculate_tip(bill_amount: float, tip_percentage: float = 15.0) -> dict:
+    """Calculate tip amount and total bill."""
+    tip = bill_amount * (tip_percentage / 100)
+    return {
+        "bill_amount": bill_amount,
+        "tip_amount": round(tip, 2),
+        "total": round(bill_amount + tip, 2)
+    }
+
+# Create specialized agents
+client = AzureOpenAIChatClient(credential=AzureCliCredential())
+
+weather_agent = client.as_agent(
+    name="WeatherAgent",
+    instructions="You are a helpful weather assistant.",
+    tools=[get_weather]
+)
+
+math_agent = client.as_agent(
+    name="MathAgent",
+    instructions="You are a helpful math assistant.",
+    tools=[calculate_tip]
+)
+
+# Register all agents
+app = AgentFunctionApp(
+    agents=[weather_agent, math_agent],
+    enable_health_check=True
+)
+```
+
+```csharp Program.cs
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+// Create specialized agents
+AIAgent weatherAgent = client.GetChatClient(deploymentName).AsAIAgent(
+    "You are a helpful weather assistant.",
+    "WeatherAgent",
+    tools: [GetWeatherTool()]);
+
+AIAgent mathAgent = client.GetChatClient(deploymentName).AsAIAgent(
+    "You are a helpful math assistant.",
+    "MathAgent",
+    tools: [CalculateTipTool()]);
+
+// Register all agents
+using IHost app = FunctionsApplication
+    .CreateBuilder(args)
+    .ConfigureFunctionsWebApplication()
+    .ConfigureDurableAgents(options =>
+    {
+        options.AddAIAgent(weatherAgent);
+        options.AddAIAgent(mathAgent);
+    })
+    .Build();
+
+app.Run();
+```
+</CodeGroup>
+
+### Testing Multiple Agents
+
+```bash
+# Weather agent
+curl -X POST http://localhost:7071/api/agents/WeatherAgent/run \
+  -d "What's the weather in Seattle?"
+
+# Math agent
+curl -X POST http://localhost:7071/api/agents/MathAgent/run \
+  -d "Calculate a 20% tip on a $50 bill"
+```
+
+## Agent Orchestrations
+
+Create complex workflows by orchestrating multiple agent calls:
+
+<CodeGroup>
+```python function_app.py
+import azure.functions as func
+from azure.durable_functions import DurableOrchestrationContext, DurableOrchestrationClient
+from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
+
+# Create agent
+WRITER_AGENT_NAME = "WriterAgent"
+
+def _create_writer_agent():
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        name=WRITER_AGENT_NAME,
+        instructions="""You refine short pieces of text. When given an initial 
+        sentence you enhance it; when given an improved sentence you polish it further."""
+    )
+
+app = AgentFunctionApp(agents=[_create_writer_agent()], enable_health_check=True)
+
+# Define orchestration
+@app.orchestration_trigger(context_name="context")
+def writer_orchestration(context: DurableOrchestrationContext):
+    """Sequential agent calls with shared session."""
+    writer = app.get_agent(context, WRITER_AGENT_NAME)
+    session = writer.create_session()
+    
+    # First pass: initial content
+    initial = yield writer.run(
+        messages="Write a concise inspirational sentence about learning.",
+        session=session
+    )
+    
+    # Second pass: refinement
+    improved_prompt = f"Improve this further while keeping it under 25 words: {initial.text}"
+    refined = yield writer.run(
+        messages=improved_prompt,
+        session=session
+    )
+    
+    return refined.text
+
+# HTTP trigger to start orchestration
+@app.route(route="writer/run", methods=["POST"])
+@app.durable_client_input(client_name="client")
+async def start_writer_orchestration(
+    req: func.HttpRequest,
+    client: DurableOrchestrationClient
+) -> func.HttpResponse:
+    """Start the orchestration."""
+    instance_id = await client.start_new(
+        orchestration_function_name="writer_orchestration"
+    )
+    
+    return func.HttpResponse(
+        body=f'{{"instanceId": "{instance_id}"}}',
+        status_code=202,
+        mimetype="application/json"
+    )
+```
+
+```csharp FunctionTriggers.cs
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.DurableTask;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.Logging;
+
+public class WriterOrchestration
+{
+    [Function(nameof(RunWriterOrchestration))]
+    public static async Task<string> RunWriterOrchestration(
+        [OrchestrationTrigger] TaskOrchestrationContext context)
+    {
+        var logger = context.CreateReplaySafeLogger<WriterOrchestration>();
+        var agent = context.GetAgent("WriterAgent");
+        var session = agent.CreateSession();
+        
+        // First pass: initial content
+        var initial = await agent.RunAsync(
+            "Write a concise inspirational sentence about learning.",
+            session: session);
+        
+        logger.LogInformation($"Initial: {initial.Text}");
+        
+        // Second pass: refinement
+        var improved = $"Improve this further while keeping it under 25 words: {initial.Text}";
+        var refined = await agent.RunAsync(improved, session: session);
+        
+        logger.LogInformation($"Refined: {refined.Text}");
+        
+        return refined.Text;
+    }
+    
+    [Function(nameof(StartWriterOrchestration))]
+    public static async Task<HttpResponseData> StartWriterOrchestration(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "writer/run")] 
+        HttpRequestData req,
+        [DurableClient] DurableTaskClient client)
+    {
+        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync(
+            nameof(RunWriterOrchestration));
+        
+        return await client.CreateCheckStatusResponseAsync(req, instanceId);
+    }
+}
+```
+</CodeGroup>
+
+### Testing Orchestrations
+
+```bash
+# Start orchestration
+curl -X POST http://localhost:7071/api/writer/run
+
+# Response with status URLs
+{
+  "id": "abc123",
+  "statusQueryGetUri": "http://localhost:7071/runtime/webhooks/durabletask/instances/abc123",
+  "sendEventPostUri": "http://localhost:7071/runtime/webhooks/durabletask/instances/abc123/raiseEvent/{eventName}"
+}
+
+# Check status
+curl http://localhost:7071/runtime/webhooks/durabletask/instances/abc123
+```
+
+## Configuration
+
+### host.json
+
+Configure the Functions runtime:
+
+```json
+{
+  "version": "2.0",
+  "extensionBundle": {
+    "id": "Microsoft.Azure.Functions.ExtensionBundle",
+    "version": "[4.*, 5.0.0)"
+  },
+  "extensions": {
+    "durableTask": {
+      "hubName": "%TASKHUB_NAME%",
+      "storageProvider": {
+        "connectionStringName": "AzureWebJobsStorage"
+      }
+    }
+  },
+  "logging": {
+    "logLevel": {
+      "default": "Information",
+      "Microsoft.Agents": "Debug"
+    }
+  }
+}
+```
+
+### local.settings.json
+
+<Tabs>
+  <Tab title="Python">
+    ```json
+    {
+      "IsEncrypted": false,
+      "Values": {
+        "FUNCTIONS_WORKER_RUNTIME": "python",
+        "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+        "DURABLE_TASK_SCHEDULER_CONNECTION_STRING": "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None",
+        "TASKHUB_NAME": "default",
+        "AZURE_OPENAI_ENDPOINT": "https://your-resource.openai.azure.com/",
+        "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME": "gpt-4o-mini",
+        "AZURE_OPENAI_API_KEY": "<optional-api-key>"
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="C#">
+    ```json
+    {
+      "IsEncrypted": false,
+      "Values": {
+        "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+        "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+        "DURABLE_TASK_SCHEDULER_CONNECTION_STRING": "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None",
+        "AZURE_OPENAI_ENDPOINT": "https://your-resource.openai.azure.com/",
+        "AZURE_OPENAI_DEPLOYMENT_NAME": "gpt-4o-mini",
+        "AZURE_OPENAI_API_KEY": "<optional-api-key>"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Advanced Features
+
+### Session Management
+
+Maintain conversation context across requests:
+
+```python
+# Client provides session ID
+curl -X POST http://localhost:7071/api/agents/Assistant/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Remember my favorite color is blue",
+    "thread_id": "user-123"
+  }'
+
+# Subsequent request with same session
+curl -X POST http://localhost:7071/api/agents/Assistant/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "What is my favorite color?",
+    "thread_id": "user-123"
+  }'
+```
+
+### Health Checks
+
+Monitor agent availability:
+
+```bash
+curl http://localhost:7071/api/health
+
+# Response
+{
+  "status": "healthy",
+  "agents": [
+    {"name": "Assistant", "status": "ready"},
+    {"name": "WeatherAgent", "status": "ready"}
+  ]
+}
+```
+
+### Time-to-Live (TTL)
+
+Configure agent session expiration:
+
+<CodeGroup>
+```python Python
+app = AgentFunctionApp(
+    agents=[agent],
+    session_ttl=timedelta(hours=2)
+)
+```
+
+```csharp C#
+options.AddAIAgent(
+    agent,
+    timeToLive: TimeSpan.FromHours(2));
+```
+</CodeGroup>
+
+### Reliable Streaming
+
+Implement resumable streaming with Redis:
+
+```python
+from agent_framework_azurefunctions import RedisStreamResponseHandler
+import redis.asyncio as redis
+
+redis_client = redis.from_url(os.environ["REDIS_CONNECTION_STRING"])
+
+app = AgentFunctionApp(
+    agents=[agent],
+    response_handler=RedisStreamResponseHandler(redis_client)
+)
+```
+
+## Deployment to Azure
+
+<Steps>
+  <Step title="Create Function App">
+    ```bash
+    az functionapp create \
+      --resource-group myResourceGroup \
+      --consumption-plan-location westus \
+      --runtime python \
+      --runtime-version 3.11 \
+      --functions-version 4 \
+      --name myAgentFunction \
+      --storage-account mystorageaccount
+    ```
+  </Step>
+  
+  <Step title="Configure App Settings">
+    ```bash
+    az functionapp config appsettings set \
+      --name myAgentFunction \
+      --resource-group myResourceGroup \
+      --settings \
+        AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/" \
+        AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini" \
+        DURABLE_TASK_SCHEDULER_CONNECTION_STRING="<dts-connection>"
+    ```
+  </Step>
+  
+  <Step title="Deploy Code">
+    ```bash
+    func azure functionapp publish myAgentFunction
+    ```
+  </Step>
+  
+  <Step title="Test Production Endpoint">
+    ```bash
+    curl -X POST https://myagentfunction.azurewebsites.net/api/agents/Assistant/run \
+      -d "Hello from production!"
+    ```
+  </Step>
+</Steps>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Managed Identity in Production">
+    Avoid API keys in production. Configure managed identity for Azure OpenAI access:
+    
+    ```bash
+    az functionapp identity assign \
+      --name myAgentFunction \
+      --resource-group myResourceGroup
+    
+    az role assignment create \
+      --assignee <function-app-principal-id> \
+      --role "Cognitive Services OpenAI User" \
+      --scope /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<openai-resource>
+    ```
+  </Accordion>
+  
+  <Accordion title="Enable Application Insights">
+    Monitor performance and errors:
+    
+    ```json
+    {
+      "Values": {
+        "APPLICATIONINSIGHTS_CONNECTION_STRING": "InstrumentationKey=..."
+      }
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Configure Proper TTL">
+    Set appropriate session expiration based on use case:
+    
+    - **Short-lived (30 min - 1 hour)**: Customer support chats
+    - **Medium-lived (2-4 hours)**: Development assistants
+    - **Long-lived (24+ hours)**: Personal assistants
+  </Accordion>
+  
+  <Accordion title="Use Azure Storage for State">
+    For production, use Azure Storage instead of emulator:
+    
+    ```json
+    {
+      "AzureWebJobsStorage": "DefaultEndpointsProtocol=https;AccountName=..."
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Implement Rate Limiting">
+    Protect against abuse with Azure API Management or custom middleware.
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Connection Errors">
+    **Error**: Cannot connect to Durable Task Scheduler
+    
+    **Solution**: Ensure DTS emulator is running:
+    ```bash
+    docker ps | grep dts-emulator
+    docker run -d --name dts-emulator -p 8080:8080 -p 8082:8082 mcr.microsoft.com/dts/dts-emulator:latest
+    ```
+  </Accordion>
+  
+  <Accordion title="Authentication Failures">
+    **Error**: Azure OpenAI authentication failed
+    
+    **Solution**: Verify authentication:
+    ```bash
+    # Check Azure CLI login
+    az account show
+    
+    # Test OpenAI access
+    az rest --method GET --url "https://your-resource.openai.azure.com/openai/deployments?api-version=2023-05-15"
+    ```
+  </Accordion>
+  
+  <Accordion title="Agent Not Found">
+    **Error**: Agent name not found in registered agents
+    
+    **Solution**: Verify agent registration and exact name match:
+    ```python
+    app = AgentFunctionApp(agents=[agent])
+    # Ensure agent.name matches URL: /api/agents/{agent.name}/run
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="DurableTask Integration" icon="arrows-rotate" href="/hosting/durable-tasks">
+    Build long-running orchestrations
+  </Card>
+  <Card title="A2A Protocol" icon="network-wired" href="/hosting/a2a-protocol">
+    Connect distributed agents
+  </Card>
+</CardGroup>
+
+## Related Resources
+
+- [Azure Functions Python Guide](https://learn.microsoft.com/azure/azure-functions/functions-reference-python)
+- [Azure Functions .NET Guide](https://learn.microsoft.com/azure/azure-functions/dotnet-isolated-process-guide)
+- [Durable Functions Overview](https://learn.microsoft.com/azure/azure-functions/durable/durable-functions-overview)
+- [Sample Code: Python](https://github.com/microsoft/agent-framework/tree/main/python/samples/04-hosting/azure_functions)
+- [Sample Code: C#](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/04-hosting/DurableAgents/AzureFunctions)

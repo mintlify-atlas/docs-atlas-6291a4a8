@@ -1,0 +1,624 @@
+---
+title: "Providers"
+description: "Connect to different AI services with Python providers"
+---
+
+The Microsoft Agent Framework supports multiple AI providers through a unified interface. Each provider offers chat clients that can be used to create agents.
+
+## Azure OpenAI
+
+Microsoft's Azure-hosted OpenAI models with enterprise features.
+
+### Installation
+
+```bash
+pip install agent-framework-core
+```
+
+### Azure OpenAI Responses Client
+
+Recommended for new applications:
+
+```python
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
+import os
+
+client = AzureOpenAIResponsesClient(
+    project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+    deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+    credential=AzureCliCredential()
+)
+
+agent = client.as_agent(
+    name="Assistant",
+    instructions="You are a helpful assistant."
+)
+
+response = await agent.run("Hello!")
+```
+
+### Azure OpenAI Chat Client
+
+Standard chat completions:
+
+```python
+from agent_framework.azure import AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
+
+client = AzureOpenAIChatClient(
+    azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+    deployment_name="gpt-4o",
+    api_version="2024-10-01-preview",
+    credential=AzureCliCredential()
+)
+
+agent = client.as_agent(
+    instructions="You are helpful.",
+    tools=[my_tool]
+)
+```
+
+### Azure OpenAI Assistants Client
+
+Persistent assistants with threads:
+
+```python
+from agent_framework.azure import AzureOpenAIAssistantsClient
+from azure.identity import AzureCliCredential
+
+client = AzureOpenAIAssistantsClient(
+    azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+    api_version="2024-05-01-preview",
+    credential=AzureCliCredential()
+)
+
+agent = client.as_agent(
+    model="gpt-4o",
+    instructions="You are a helpful assistant.",
+    tools=["code_interpreter", "file_search"]  # Built-in tools
+)
+```
+
+### Authentication Options
+
+```python
+from azure.identity import (
+    AzureCliCredential,
+    DefaultAzureCredential,
+    ManagedIdentityCredential,
+    ClientSecretCredential
+)
+
+# Azure CLI (for local development)
+credential = AzureCliCredential()
+
+# Default credential (tries multiple methods)
+credential = DefaultAzureCredential()
+
+# Managed identity (for Azure services)
+credential = ManagedIdentityCredential()
+
+# Service principal
+credential = ClientSecretCredential(
+    tenant_id="...",
+    client_id="...",
+    client_secret="..."
+)
+
+client = AzureOpenAIResponsesClient(
+    project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+    deployment_name="gpt-4o",
+    credential=credential
+)
+```
+
+## OpenAI
+
+Direct access to OpenAI's models.
+
+### Installation
+
+```bash
+pip install agent-framework-core
+```
+
+### OpenAI Responses Client
+
+```python
+from agent_framework.openai import OpenAIResponsesClient
+import os
+
+client = OpenAIResponsesClient(
+    api_key=os.environ["OPENAI_API_KEY"],
+    model="gpt-4o"
+)
+
+agent = client.as_agent(
+    name="Assistant",
+    instructions="You are helpful.",
+    tools=[my_tool]
+)
+
+response = await agent.run("What's the weather?")
+```
+
+### OpenAI Chat Client
+
+```python
+from agent_framework.openai import OpenAIChatClient
+
+client = OpenAIChatClient(
+    api_key=os.environ["OPENAI_API_KEY"],
+    model="gpt-4o-mini"
+)
+
+agent = client.as_agent(
+    instructions="You are a helpful assistant."
+)
+```
+
+### OpenAI Assistants Client
+
+```python
+from agent_framework.openai import OpenAIAssistantsClient
+
+client = OpenAIAssistantsClient(
+    api_key=os.environ["OPENAI_API_KEY"]
+)
+
+agent = client.as_agent(
+    model="gpt-4o",
+    instructions="You are helpful.",
+    tools=["code_interpreter"]
+)
+```
+
+## Anthropic
+
+Claude models from Anthropic.
+
+### Installation
+
+```bash
+pip install agent-framework-anthropic
+```
+
+### Anthropic Client
+
+```python
+from agent_framework.anthropic import AnthropicClient
+import os
+
+client = AnthropicClient(
+    api_key=os.environ["ANTHROPIC_API_KEY"],
+    model="claude-3-5-sonnet-20241022"
+)
+
+agent = client.as_agent(
+    name="ClaudeAgent",
+    instructions="You are a helpful assistant.",
+    tools=[my_tool]
+)
+
+response = await agent.run("Hello!")
+```
+
+### Streaming Example
+
+```python
+agent = AnthropicClient().as_agent(
+    name="Assistant",
+    instructions="You are helpful."
+)
+
+print("Agent: ", end="", flush=True)
+async for chunk in agent.run("Tell me a story", stream=True):
+    if chunk.text:
+        print(chunk.text, end="", flush=True)
+print()
+```
+
+## Azure AI Foundry
+
+Azure AI Foundry Agent Service (V2) with project-based agents.
+
+### Installation
+
+```bash
+pip install agent-framework-azure-ai
+```
+
+### Azure AI Agent Client
+
+```python
+from agent_framework.azure import AzureAIAgentClient
+from azure.identity import AzureCliCredential
+import os
+
+client = AzureAIAgentClient(
+    project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+    credential=AzureCliCredential()
+)
+
+agent = client.as_agent(
+    name="FoundryAgent",
+    instructions="You are helpful.",
+    model="gpt-4o",
+    tools=[my_tool]
+)
+
+response = await agent.run("Hello!")
+```
+
+### With Hosted MCP Tools
+
+```python
+from agent_framework.azure import AzureAIAgentClient
+from agent_framework import hosted_mcp_tool
+
+client = AzureAIAgentClient(credential=AzureCliCredential())
+
+# Use hosted MCP server
+mcp_tool = hosted_mcp_tool(
+    connection_name="my-mcp-server",
+    project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"]
+)
+
+agent = client.as_agent(
+    instructions="You can use MCP tools.",
+    tools=[mcp_tool]
+)
+```
+
+## AWS Bedrock
+
+AWS-hosted foundation models.
+
+### Installation
+
+```bash
+pip install agent-framework-bedrock
+```
+
+### Bedrock Chat Client
+
+```python
+from agent_framework.amazon import BedrockChatClient
+import os
+
+client = BedrockChatClient(
+    region_name="us-east-1",
+    model="anthropic.claude-3-5-sonnet-20241022-v2:0"
+)
+
+agent = client.as_agent(
+    name="BedrockAgent",
+    instructions="You are helpful.",
+    tools=[my_tool]
+)
+
+response = await agent.run("What's the weather?")
+```
+
+## Ollama
+
+Local open-source models.
+
+### Installation
+
+```bash
+pip install agent-framework-ollama
+```
+
+### Ollama Chat Client
+
+```python
+from agent_framework.ollama import OllamaChatClient
+
+client = OllamaChatClient(
+    base_url="http://localhost:11434",
+    model="llama3.2"
+)
+
+agent = client.as_agent(
+    name="LocalAgent",
+    instructions="You are a helpful assistant.",
+    tools=[my_tool]  # Not all models support function calling
+)
+
+response = await agent.run("Hello!")
+```
+
+<Note>
+Not all Ollama models support function calling. Models like `llama3.2` and `qwen2.5` support tools, while others may not.
+</Note>
+
+## Provider Comparison
+
+| Provider | Package | Use Case | Authentication |
+|----------|---------|----------|----------------|
+| **Azure OpenAI** | `agent-framework-core` | Enterprise deployments with Azure | Azure Identity |
+| **OpenAI** | `agent-framework-core` | Direct OpenAI API access | API Key |
+| **Anthropic** | `agent-framework-anthropic` | Claude models | API Key |
+| **Azure AI Foundry** | `agent-framework-azure-ai` | Managed agents on Azure | Azure Identity |
+| **AWS Bedrock** | `agent-framework-bedrock` | AWS-hosted models | AWS Credentials |
+| **Ollama** | `agent-framework-ollama` | Local, open-source models | None (local) |
+
+## Provider Features
+
+### Common Features
+
+All providers support:
+- Non-streaming and streaming responses
+- Function/tool calling (model-dependent)
+- Session management
+- Middleware
+- Chat options (temperature, max_tokens, etc.)
+
+### Provider-Specific Features
+
+#### Azure OpenAI & OpenAI
+
+- **Code Interpreter**: Execute Python code
+- **File Search**: RAG over uploaded files
+- **Structured Output**: JSON schema-based responses
+- **Web Search**: Bing search integration (OpenAI only)
+
+```python
+from agent_framework.openai import OpenAIResponsesClient
+
+agent = OpenAIResponsesClient().as_agent(
+    instructions="You are helpful.",
+    tools=["code_interpreter", "file_search", "web_search"]
+)
+```
+
+#### Anthropic
+
+- **Extended Thinking**: Claude's reasoning mode
+- **Prompt Caching**: Reduce costs for repeated prompts
+
+```python
+from agent_framework.anthropic import AnthropicClient
+
+client = AnthropicClient(
+    model="claude-3-5-sonnet-20241022",
+    # Enable prompt caching
+    enable_prompt_caching=True
+)
+```
+
+#### Azure AI Foundry
+
+- **Hosted MCP Tools**: Pre-configured MCP integrations
+- **Project-Scoped Agents**: Agents tied to Azure AI projects
+- **Memory Integration**: Built-in Azure AI Search memory
+
+```python
+from agent_framework.azure import AzureAIAgentClient, FoundryMemoryProvider
+
+memory = FoundryMemoryProvider(
+    project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+    credential=credential
+)
+
+agent = AzureAIAgentClient(credential=credential).as_agent(
+    instructions="You have memory.",
+    context_providers=[memory]
+)
+```
+
+## Client Options
+
+### Common Options
+
+All clients support these options:
+
+```python
+client = ProviderClient(
+    # Model selection
+    model="model-name",
+    
+    # API settings
+    timeout=30.0,
+    max_retries=3,
+    
+    # Default chat options
+    temperature=0.7,
+    max_tokens=1000,
+    top_p=0.9
+)
+```
+
+### Runtime Options
+
+Override options per-run:
+
+```python
+agent = client.as_agent(instructions="You are helpful.")
+
+response = await agent.run(
+    "Be creative!",
+    options={
+        "temperature": 1.0,
+        "max_tokens": 2000,
+        "top_p": 0.95
+    }
+)
+```
+
+## Custom Chat Clients
+
+Create your own provider by implementing `BaseChatClient`:
+
+```python
+from agent_framework import BaseChatClient, ChatResponse, Message
+
+class MyCustomClient(BaseChatClient):
+    def __init__(self, api_key: str, model: str):
+        super().__init__()
+        self.api_key = api_key
+        self.model = model
+    
+    async def _inner_get_response(
+        self,
+        *,
+        messages: list[Message],
+        options: dict | None = None,
+        **kwargs
+    ) -> ChatResponse:
+        """Call your LLM API here."""
+        # Call your API
+        response = await self.call_api(messages)
+        
+        return ChatResponse(
+            messages=[Message("assistant", response.text)],
+            usage={"total_tokens": response.tokens}
+        )
+    
+    async def _inner_get_streaming_response(
+        self,
+        *,
+        messages: list[Message],
+        options: dict | None = None,
+        **kwargs
+    ):
+        """Stream responses from your LLM API."""
+        async for chunk in self.stream_api(messages):
+            yield ChatResponseUpdate(text=chunk)
+
+# Use your custom client
+client = MyCustomClient(api_key="...", model="custom-model")
+agent = client.as_agent(instructions="You are helpful.")
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use environment variables for credentials">
+    Store API keys and endpoints in environment variables:
+    
+    ```python
+    import os
+    
+    client = OpenAIResponsesClient(
+        api_key=os.environ["OPENAI_API_KEY"]
+    )
+    ```
+  </Accordion>
+  
+  <Accordion title="Choose the right authentication method">
+    For Azure:
+    - **Local development**: Use `AzureCliCredential`
+    - **Production**: Use `ManagedIdentityCredential` or `DefaultAzureCredential`
+  </Accordion>
+  
+  <Accordion title="Set appropriate timeouts">
+    Configure timeouts based on your use case:
+    
+    ```python
+    client = ProviderClient(
+        timeout=60.0,  # Longer for complex tasks
+        max_retries=2
+    )
+    ```
+  </Accordion>
+  
+  <Accordion title="Verify tool support">
+    Check if your model supports function calling before using tools. Not all models or providers support tools.
+  </Accordion>
+  
+  <Accordion title="Use Azure for enterprise">
+    Azure OpenAI and Azure AI Foundry provide:
+    - Enterprise-grade security
+    - Data residency
+    - SLAs
+    - Managed identity authentication
+  </Accordion>
+</AccordionGroup>
+
+## Provider Selection Guide
+
+### Choose Azure OpenAI if you need:
+- Enterprise security and compliance
+- Data residency requirements
+- Azure ecosystem integration
+- Managed identity authentication
+
+### Choose OpenAI if you need:
+- Latest model releases
+- Web search capabilities
+- Simpler setup for development
+
+### Choose Anthropic if you need:
+- Claude's advanced reasoning
+- Extended context windows
+- Strong safety features
+
+### Choose Azure AI Foundry if you need:
+- Managed agent infrastructure
+- Built-in memory and search
+- Project-based organization
+
+### Choose Bedrock if you need:
+- AWS ecosystem integration
+- Multiple model providers (Anthropic, Meta, etc.)
+- AWS security and compliance
+
+### Choose Ollama if you need:
+- Local, offline operation
+- Open-source models
+- No API costs
+- Full data privacy
+
+## Environment Setup
+
+### Azure OpenAI
+
+```bash
+export AZURE_AI_PROJECT_ENDPOINT="https://your-project.cognitiveservices.azure.com"
+export AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="gpt-4o"
+# Authentication via: az login
+```
+
+### OpenAI
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+### Anthropic
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+### Azure AI Foundry
+
+```bash
+export AZURE_AI_PROJECT_ENDPOINT="https://your-project.cognitiveservices.azure.com"
+# Authentication via: az login
+```
+
+### AWS Bedrock
+
+```bash
+export AWS_REGION="us-east-1"
+export AWS_ACCESS_KEY_ID="..."
+export AWS_SECRET_ACCESS_KEY="..."
+```
+
+### Ollama
+
+```bash
+# Install Ollama: https://ollama.com
+ollama pull llama3.2
+ollama serve  # Starts on http://localhost:11434
+```
+
+## Related
+
+- [Agents](/python/agents) - Using providers with agents
+- [Tools](/python/tools) - Provider-specific tool support
+- [Workflows](/python/workflows) - Multi-provider workflows

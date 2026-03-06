@@ -1,0 +1,458 @@
+---
+title: Tools
+description: API reference for Tools and function calling in Microsoft Agent Framework Python SDK
+---
+
+# Tools API Reference
+
+Tools enable agents to execute Python functions and integrate external capabilities.
+
+## FunctionTool
+
+A tool that wraps a Python function to make it callable by AI models.
+
+```python
+from agent_framework import FunctionTool
+```
+
+### Constructor
+
+```python
+tool = FunctionTool(
+    name="get_weather",
+    description="Get the weather for a location",
+    func=my_function,
+    input_model=WeatherArgs,
+    approval_mode="never_require",
+    max_invocations=10
+)
+```
+
+<ParamField path="name" type="str" required>
+  The name of the function.
+</ParamField>
+
+<ParamField path="description" type="str" default="">
+  A description of the function.
+</ParamField>
+
+<ParamField path="approval_mode" type="Literal['always_require', 'never_require'] | None" default="never_require">
+  Whether approval is required to run this tool.
+</ParamField>
+
+<ParamField path="kind" type="str | None">
+  Optional provider-agnostic tool classification (e.g., "shell").
+</ParamField>
+
+<ParamField path="max_invocations" type="int | None">
+  Maximum number of times this function can be invoked across the lifetime of this tool instance. If None, there is no limit.
+  
+  **Note**: This counter lives on the tool instance and is never automatically reset. For per-request limits, use `FunctionInvocationConfiguration["max_function_calls"]` instead.
+</ParamField>
+
+<ParamField path="max_invocation_exceptions" type="int | None">
+  Maximum number of exceptions allowed during invocations. If None, there is no limit.
+</ParamField>
+
+<ParamField path="additional_properties" type="dict[str, Any] | None">
+  Additional properties to set on the function.
+</ParamField>
+
+<ParamField path="func" type="Callable[..., Any] | None">
+  The function to wrap. When None, creates a declaration-only tool that has no implementation.
+</ParamField>
+
+<ParamField path="input_model" type="type[BaseModel] | Mapping[str, Any] | None">
+  The Pydantic model that defines the input parameters, or a JSON schema dictionary. If not provided and func is not None, it will be inferred from the function signature.
+</ParamField>
+
+<ParamField path="result_parser" type="Callable[[Any], str] | None">
+  Optional callable to convert raw function return value to string. When provided, overrides the default `parse_result()` logic.
+</ParamField>
+
+<ParamField path="**kwargs" type="Any">
+  Additional keyword arguments.
+</ParamField>
+
+### Properties
+
+<ParamField path="declaration_only" type="bool">
+  Indicates whether the function is declaration only (has no implementation).
+</ParamField>
+
+<ParamField path="invocation_count" type="int">
+  Current number of times this function has been invoked.
+</ParamField>
+
+<ParamField path="invocation_exception_count" type="int">
+  Current number of exceptions that occurred during invocations.
+</ParamField>
+
+### Methods
+
+#### invoke()
+
+Run the function with provided arguments.
+
+```python
+result = await tool.invoke(
+    arguments={"location": "Seattle", "unit": "celsius"}
+)
+```
+
+<ParamField path="arguments" type="BaseModel | Mapping[str, Any] | None">
+  A mapping or model instance containing the arguments for the function.
+</ParamField>
+
+<ParamField path="**kwargs" type="Any">
+  Keyword arguments to pass to the function (used if arguments is not provided).
+</ParamField>
+
+<ResponseField name="return" type="str">
+  The parsed result as a string - either plain text or serialized JSON.
+</ResponseField>
+
+#### parameters()
+
+Get the JSON schema of the parameters.
+
+```python
+schema = tool.parameters()
+```
+
+<ResponseField name="return" type="dict[str, Any]">
+  A dictionary containing the JSON schema for the function's parameters. The result is cached after the first call.
+</ResponseField>
+
+#### to_json_schema_spec()
+
+Convert the FunctionTool to JSON Schema function specification format.
+
+```python
+spec = tool.to_json_schema_spec()
+```
+
+<ResponseField name="return" type="dict[str, Any]">
+  A dictionary containing the function specification in JSON Schema format.
+</ResponseField>
+
+#### parse_result() (static)
+
+Convert a raw function return value to a string representation.
+
+```python
+result_str = FunctionTool.parse_result(result)
+```
+
+<ParamField path="result" type="Any" required>
+  The raw return value from the wrapped function.
+</ParamField>
+
+<ResponseField name="return" type="str">
+  A string representation of the result, either plain text or serialized JSON.
+</ResponseField>
+
+### Example: Direct Instantiation
+
+```python
+from typing import Annotated
+from pydantic import BaseModel, Field
+from agent_framework import FunctionTool
+
+class WeatherArgs(BaseModel):
+    location: Annotated[str, Field(description="The city name")]
+    unit: Annotated[str, Field(description="Temperature unit")] = "celsius"
+
+def get_weather_impl(location: str, unit: str = "celsius") -> str:
+    return f"Weather in {location}: 22°{unit[0].upper()}"
+
+weather_tool = FunctionTool(
+    name="get_weather",
+    description="Get the weather for a location",
+    func=get_weather_impl,
+    approval_mode="never_require",
+    input_model=WeatherArgs
+)
+
+# Use with an agent
+agent = Agent(client=client, tools=[weather_tool])
+
+# Or invoke directly
+result = await weather_tool.invoke(
+    arguments=WeatherArgs(location="Seattle")
+)
+print(result)  # "Weather in Seattle: 22°C"
+```
+
+### Example: Declaration-Only Tool
+
+```python
+from agent_framework import FunctionTool
+
+# Create a tool without implementation
+# Useful for testing agent reasoning or client-side execution
+declaration_tool = FunctionTool(
+    name="get_current_time",
+    description="Get the current time in ISO 8601 format.",
+    func=None,  # No implementation
+    input_model=None  # No parameters
+)
+
+assert declaration_tool.declaration_only == True
+```
+
+---
+
+## @tool Decorator
+
+Decorate a function to turn it into a FunctionTool.
+
+```python
+from agent_framework import tool
+from typing import Annotated
+```
+
+### Usage
+
+```python
+@tool(approval_mode="never_require")
+def get_weather(
+    location: Annotated[str, "The city name"],
+    unit: Annotated[str, "Temperature unit"] = "celsius"
+) -> str:
+    """Get the weather for a location."""
+    return f"Weather in {location}: 22°{unit[0].upper()}"
+```
+
+### Parameters
+
+<ParamField path="func" type="Callable[..., Any] | None">
+  The function to decorate. Enables decorator to be used with or without parentheses.
+</ParamField>
+
+<ParamField path="name" type="str | None">
+  The name of the function. If not provided, uses the function's `__name__`.
+</ParamField>
+
+<ParamField path="description" type="str | None">
+  A description of the function. If not provided, uses the function's docstring.
+</ParamField>
+
+<ParamField path="schema" type="type[BaseModel] | Mapping[str, Any] | None">
+  Explicit input schema for the function. Can be a Pydantic BaseModel subclass or a JSON schema dictionary. When provided, used instead of inferring from signature.
+</ParamField>
+
+<ParamField path="approval_mode" type="Literal['always_require', 'never_require'] | None" default="never_require">
+  Whether approval is required to run this tool.
+</ParamField>
+
+<ParamField path="kind" type="str | None">
+  Optional provider-agnostic tool classification.
+</ParamField>
+
+<ParamField path="max_invocations" type="int | None">
+  Maximum number of times this function can be invoked across the lifetime of this tool instance.
+</ParamField>
+
+<ParamField path="max_invocation_exceptions" type="int | None">
+  Maximum number of exceptions allowed during invocations.
+</ParamField>
+
+<ParamField path="additional_properties" type="dict[str, Any] | None">
+  Additional properties to set on the function.
+</ParamField>
+
+<ParamField path="result_parser" type="Callable[[Any], str] | None">
+  Optional callable to override default result parsing.
+</ParamField>
+
+<ResponseField name="return" type="FunctionTool | Callable[[Callable], FunctionTool]">
+  The decorated function as a FunctionTool, or a decorator if called without a function.
+</ResponseField>
+
+### Examples
+
+#### Basic Usage
+
+```python
+from agent_framework import tool
+from typing import Annotated
+
+@tool(approval_mode="never_require")
+def calculate_sum(
+    a: Annotated[int, "The first number"],
+    b: Annotated[int, "The second number"]
+) -> int:
+    """Calculate the sum of two numbers."""
+    return a + b
+```
+
+#### With Pydantic Field Annotations
+
+```python
+from agent_framework import tool
+from typing import Annotated
+from pydantic import Field
+
+@tool
+def search_database(
+    query: Annotated[str, Field(description="Search query", min_length=1)],
+    limit: Annotated[int, Field(description="Max results", ge=1, le=100)] = 10
+) -> str:
+    """Search the database."""
+    return f"Found results for: {query}"
+```
+
+#### Async Functions
+
+```python
+@tool(approval_mode="never_require")
+async def async_get_weather(location: str) -> str:
+    """Get weather asynchronously."""
+    # Simulate async operation
+    await asyncio.sleep(0.1)
+    return f"Weather in {location}"
+```
+
+#### Custom Name and Description
+
+```python
+@tool(name="custom_weather", description="Custom weather function")
+def another_weather_func(location: str) -> str:
+    return f"Weather in {location}"
+```
+
+#### With Explicit Schema
+
+```python
+from pydantic import BaseModel, Field
+
+class WeatherInput(BaseModel):
+    location: Annotated[str, Field(description="City name")]
+    unit: str = "celsius"
+
+@tool(schema=WeatherInput)
+def get_weather(location: str, unit: str = "celsius") -> str:
+    """Get weather for a location."""
+    return f"Weather in {location}: 22 {unit}"
+```
+
+#### With Approval Required
+
+```python
+@tool(approval_mode="always_require")
+def delete_file(path: Annotated[str, "File path to delete"]) -> str:
+    """Delete a file. Requires approval before execution."""
+    os.remove(path)
+    return f"Deleted {path}"
+```
+
+---
+
+## Function Invocation Configuration
+
+Configuration for automatic function invocation in chat clients.
+
+```python
+from agent_framework import FunctionInvocationConfiguration
+```
+
+### Configuration Dictionary
+
+<ParamField path="enabled" type="bool" default="True">
+  Master switch for the function invocation loop.
+</ParamField>
+
+<ParamField path="max_iterations" type="int" default="40">
+  Limits the number of LLM roundtrips (iterations). Each iteration may execute one or more function calls in parallel.
+</ParamField>
+
+<ParamField path="max_function_calls" type="int | None" default="None">
+  Limits the total number of individual function invocations across all iterations within a single request.
+  
+  This is a **best-effort** limit checked after each batch of parallel tool calls completes. If the model requests 20 parallel calls in a single iteration and the limit is 10, all 20 will execute before the loop stops.
+</ParamField>
+
+<ParamField path="max_consecutive_errors_per_request" type="int" default="3">
+  How many consecutive errors before abandoning the tool loop for this request.
+</ParamField>
+
+<ParamField path="terminate_on_unknown_calls" type="bool" default="False">
+  Whether to raise an error when the model requests a function not in the tool map.
+</ParamField>
+
+<ParamField path="additional_tools" type="Sequence[FunctionTool]" default="[]">
+  Extra tools available during execution but not advertised to the model in the tool list.
+</ParamField>
+
+<ParamField path="include_detailed_errors" type="bool" default="False">
+  Whether to include exception details in the function result returned to the model.
+</ParamField>
+
+### Example
+
+```python
+from agent_framework.openai import OpenAIChatClient
+
+client = OpenAIChatClient(api_key="your_api_key")
+
+# Configure function invocation limits
+client.function_invocation_configuration["max_iterations"] = 5
+client.function_invocation_configuration["max_function_calls"] = 20
+client.function_invocation_configuration["include_detailed_errors"] = True
+
+# Use with agent
+agent = client.as_agent(tools=[my_tool])
+response = await agent.run("Execute some tasks")
+```
+
+---
+
+## normalize_tools()
+
+Normalize tool inputs while preserving non-callable tool objects.
+
+```python
+from agent_framework import normalize_tools
+
+normalized = normalize_tools([my_function, my_tool, tool_dict])
+```
+
+<ParamField path="tools" type="ToolTypes | Callable | Sequence[ToolTypes | Callable] | None" required>
+  A single tool or sequence of tools.
+</ParamField>
+
+<ResponseField name="return" type="list[ToolTypes]">
+  A normalized list where callable inputs are converted to FunctionTool using the @tool decorator, and existing tool objects are passed through unchanged.
+</ResponseField>
+
+### Example
+
+```python
+from agent_framework import normalize_tools, FunctionTool
+
+def my_func(x: int) -> int:
+    return x * 2
+
+my_tool = FunctionTool(name="custom", func=lambda: "result")
+tool_dict = {"type": "function", "function": {...}}
+
+tools = normalize_tools([my_func, my_tool, tool_dict])
+# Returns: [FunctionTool(my_func), my_tool, tool_dict]
+```
+
+---
+
+## Tool Type Aliases
+
+```python
+from agent_framework import ToolTypes
+```
+
+**ToolTypes**: Type alias for tool inputs.
+
+```python
+ToolTypes = FunctionTool | MCPTool | Mapping[str, Any] | object
+```
+
+This type alias represents all valid tool input types that can be passed to agents and chat clients.

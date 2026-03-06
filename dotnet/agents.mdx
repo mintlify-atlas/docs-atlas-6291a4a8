@@ -1,0 +1,356 @@
+---
+title: 'Building Agents'
+description: 'Learn how to create and configure AI agents in the .NET SDK'
+---
+
+## Overview
+
+In the Microsoft Agent Framework .NET SDK, `AIAgent` is the foundational abstraction for creating AI-powered agents. Agents encapsulate an AI model, instructions, tools, and conversation management capabilities.
+
+## Core Concepts
+
+### AIAgent Base Class
+
+All agents derive from the `AIAgent` abstract base class, which provides:
+
+- **Unique Identity**: Every agent has an `Id` and optional `Name` and `Description`
+- **Conversation Management**: Agents can create and manage `AgentSession` instances for multi-turn conversations
+- **Execution Methods**: `RunAsync()` and `RunStreamingAsync()` for synchronous and streaming responses
+
+```csharp
+public abstract class AIAgent
+{
+    public string Id { get; }
+    public virtual string? Name { get; }
+    public virtual string? Description { get; }
+    
+    public abstract Task<AgentResponse> RunAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentSession? session = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default);
+    
+    public abstract IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentSession? session = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default);
+    
+    public ValueTask<AgentSession> CreateSessionAsync(
+        CancellationToken cancellationToken = default);
+}
+```
+
+### ChatClientAgent
+
+The primary concrete implementation is `ChatClientAgent`, which wraps an `IChatClient` from `Microsoft.Extensions.AI` to interact with various AI providers.
+
+## Creating Agents
+
+### Basic Agent Creation
+
+Use the `AsAIAgent()` extension method on any `IChatClient` to create an agent:
+
+```csharp
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using OpenAI.Chat;
+
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+// Create an agent using Azure OpenAI
+AIAgent agent = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new DefaultAzureCredential())
+    .GetChatClient(deploymentName)
+    .AsAIAgent(
+        instructions: "You are a helpful assistant.",
+        name: "Assistant");
+
+// Run the agent
+AgentResponse response = await agent.RunAsync("What is the capital of France?");
+Console.WriteLine(response.Text);
+```
+
+<Warning>
+  `DefaultAzureCredential` is convenient for development but requires careful consideration in production. Consider using a specific credential (e.g., `ManagedIdentityCredential`) to avoid latency issues and potential security risks.
+</Warning>
+
+### Agent with Configuration Options
+
+For more control, use `ChatClientAgentOptions`:
+
+```csharp
+using Microsoft.Extensions.AI;
+
+AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions()
+{
+    Name = "ResearchAssistant",
+    Description = "An agent that helps with research tasks",
+    ChatOptions = new ChatOptions()
+    {
+        Instructions = "You are an expert research assistant.",
+        Temperature = 0.7f,
+        MaxOutputTokens = 2000
+    }
+});
+```
+
+## Running Agents
+
+### Simple Invocation
+
+```csharp
+// Single-turn interaction
+AgentResponse response = await agent.RunAsync("Tell me a joke about programming.");
+Console.WriteLine(response.Text);
+```
+
+### Streaming Responses
+
+```csharp
+// Stream responses for real-time output
+await foreach (var update in agent.RunStreamingAsync("Write a short story about AI."))
+{
+    Console.Write(update.Text);
+}
+```
+
+### Multi-Turn Conversations
+
+Use `AgentSession` to maintain conversation context across multiple turns:
+
+```csharp
+// Create a session for the conversation
+AgentSession session = await agent.CreateSessionAsync();
+
+// First turn
+var response1 = await agent.RunAsync("Tell me a joke about pirates.", session);
+Console.WriteLine(response1.Text);
+
+// Second turn - agent remembers previous context
+var response2 = await agent.RunAsync(
+    "Now tell it in the voice of a pirate's parrot.", 
+    session);
+Console.WriteLine(response2.Text);
+```
+
+### Streaming Multi-Turn Conversations
+
+```csharp
+AgentSession session = await agent.CreateSessionAsync();
+
+await foreach (var update in agent.RunStreamingAsync("Tell me a joke.", session))
+{
+    Console.Write(update.Text);
+}
+
+await foreach (var update in agent.RunStreamingAsync("Make it funnier.", session))
+{
+    Console.Write(update.Text);
+}
+```
+
+## Structured Output
+
+### Using ResponseFormat
+
+Request structured JSON output matching a specific schema:
+
+```csharp
+using System.ComponentModel;
+using System.Text.Json.Serialization;
+
+[Description("Information about a city")]
+public class CityInfo
+{
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+    
+    [JsonPropertyName("population")]
+    public int? Population { get; set; }
+    
+    [JsonPropertyName("country")]
+    public string? Country { get; set; }
+}
+
+AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions()
+{
+    Name = "CityExpert",
+    ChatOptions = new ChatOptions()
+    {
+        Instructions = "You provide information about cities.",
+        ResponseFormat = ChatResponseFormat.ForJsonSchema<CityInfo>()
+    }
+});
+
+AgentResponse response = await agent.RunAsync(
+    "Tell me about Paris, France.");
+
+// Deserialize the structured output
+CityInfo city = JsonSerializer.Deserialize<CityInfo>(response.Text);
+Console.WriteLine($"City: {city.Name}, Population: {city.Population}");
+```
+
+### Using Generic RunAsync&lt;T&gt;
+
+```csharp
+// Directly get typed result
+AgentResponse<CityInfo> response = await agent.RunAsync<CityInfo>(
+    "Tell me about Tokyo, Japan.");
+
+CityInfo city = response.Result;
+Console.WriteLine($"City: {city.Name}");
+```
+
+## Agent as a Tool
+
+Agents can be converted to `AIFunction` instances and used as tools by other agents:
+
+```csharp
+// Create a specialized agent
+AIAgent weatherAgent = weatherChatClient.AsAIAgent(
+    name: "WeatherAgent",
+    instructions: "You provide weather information for cities.");
+
+// Convert agent to a function tool
+AIFunction weatherTool = weatherAgent.AsAIFunction();
+
+// Use it as a tool in another agent
+AIAgent mainAgent = chatClient.AsAIAgent(
+    instructions: "You are a travel assistant.",
+    tools: [weatherTool]);
+
+var response = await mainAgent.RunAsync(
+    "What's the weather like in Paris?");
+```
+
+## Agent Builder Pattern
+
+Use `AIAgentBuilder` to compose agents with middleware and additional functionality:
+
+```csharp
+using Microsoft.Extensions.AI;
+
+AIAgent baseAgent = chatClient.AsAIAgent(
+    instructions: "You are a helpful assistant.");
+
+// Build agent with middleware
+AIAgent enhancedAgent = baseAgent
+    .AsBuilder()
+    .Use(LoggingMiddleware)
+    .Use(FilteringMiddleware)
+    .Build();
+
+async Task<AgentResponse> LoggingMiddleware(
+    IEnumerable<ChatMessage> messages,
+    AgentSession? session,
+    AgentRunOptions? options,
+    AIAgent innerAgent,
+    CancellationToken cancellationToken)
+{
+    Console.WriteLine($"[{DateTime.Now}] Agent invoked");
+    var response = await innerAgent.RunAsync(messages, session, options, cancellationToken);
+    Console.WriteLine($"[{DateTime.Now}] Agent completed");
+    return response;
+}
+```
+
+<Card title="Learn More" icon="arrow-right" href="/dotnet/middleware">
+  Explore middleware patterns for agents
+</Card>
+
+## Session Management
+
+### Creating Sessions
+
+```csharp
+// Create a new session
+AgentSession session = await agent.CreateSessionAsync();
+```
+
+### Serializing Sessions
+
+Sessions can be serialized for persistence:
+
+```csharp
+// Serialize session state
+JsonElement sessionData = await agent.SerializeSessionAsync(session);
+
+// Store in database, file, etc.
+string json = JsonSerializer.Serialize(sessionData);
+
+// Later, deserialize
+JsonElement restored = JsonSerializer.Deserialize<JsonElement>(json);
+AgentSession restoredSession = await agent.DeserializeSessionAsync(restored);
+
+// Continue conversation
+var response = await agent.RunAsync("Continue our discussion.", restoredSession);
+```
+
+## Agent Run Options
+
+Customize agent behavior per request with `AgentRunOptions`:
+
+```csharp
+var options = new ChatClientAgentRunOptions(new ChatOptions()
+{
+    Temperature = 0.9f,
+    MaxOutputTokens = 500,
+    Tools = [additionalTool]
+});
+
+var response = await agent.RunAsync(
+    "Be creative!", 
+    session, 
+    options);
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Sessions for Context">
+    Always use `AgentSession` for multi-turn conversations to maintain context and state.
+  </Accordion>
+  
+  <Accordion title="Handle Cancellation">
+    Pass `CancellationToken` to agent methods to support graceful cancellation:
+    
+    ```csharp
+    var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    var response = await agent.RunAsync(query, cancellationToken: cts.Token);
+    ```
+  </Accordion>
+  
+  <Accordion title="Dispose Resources">
+    Agents may hold resources. Consider disposal patterns:
+    
+    ```csharp
+    // If agent implements IDisposable/IAsyncDisposable
+    await using var agent = CreateAgent();
+    ```
+  </Accordion>
+  
+  <Accordion title="Use Structured Output for Data Extraction">
+    When extracting data, use structured output with strongly-typed classes rather than parsing text.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Tools & Functions" icon="wrench" href="/dotnet/tools">
+    Add function calling capabilities to agents
+  </Card>
+  <Card title="Middleware" icon="layer-group" href="/dotnet/middleware">
+    Enhance agents with middleware pipelines
+  </Card>
+  <Card title="Memory & Context" icon="brain" href="/dotnet/agents#memory">
+    Add memory and context providers
+  </Card>
+  <Card title="Providers" icon="plug" href="/dotnet/providers">
+    Connect to different AI providers
+  </Card>
+</CardGroup>

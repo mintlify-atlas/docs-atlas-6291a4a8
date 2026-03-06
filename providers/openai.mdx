@@ -1,0 +1,771 @@
+---
+title: "OpenAI"
+description: "Use OpenAI models directly with Microsoft Agent Framework"
+---
+
+# OpenAI Provider
+
+The OpenAI provider gives you direct access to OpenAI's latest models including GPT-4o, GPT-4, o1, o3, and GPT-3.5-Turbo. Use this provider when you want to work directly with OpenAI's API rather than through Azure.
+
+## Provider Options
+
+OpenAI integration offers multiple approaches:
+
+<CardGroup cols={3}>
+  <Card title="Chat Client" icon="comments">
+    Direct chat completions with streaming
+  </Card>
+  <Card title="Responses Client" icon="message">
+    Structured responses with tools
+  </Card>
+  <Card title="Assistants API" icon="robot">
+    Persistent agents with code interpreter and file search
+  </Card>
+</CardGroup>
+
+## Installation
+
+<CodeGroup>
+
+```bash Python
+pip install agent-framework --pre
+# OpenAI support is included in the core package
+```
+
+```bash .NET
+dotnet add package Microsoft.Agents.AI
+dotnet add package OpenAI
+```
+
+</CodeGroup>
+
+## Authentication
+
+OpenAI uses API keys for authentication:
+
+### Environment Variable (Recommended)
+
+<CodeGroup>
+
+```python Python
+import os
+from agent_framework.openai import OpenAIChatClient
+
+# Set OPENAI_API_KEY environment variable
+# The client will automatically read from the environment
+client = OpenAIChatClient()
+```
+
+```csharp C#
+using OpenAI;
+using Microsoft.Agents.AI;
+
+var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+var client = new OpenAIClient(apiKey);
+```
+
+</CodeGroup>
+
+```bash .env
+OPENAI_API_KEY=sk-proj-...
+OPENAI_CHAT_MODEL_ID=gpt-4o
+```
+
+### Explicit API Key
+
+<CodeGroup>
+
+```python Python
+from agent_framework.openai import OpenAIChatClient
+
+client = OpenAIChatClient(api_key="sk-proj-...")
+```
+
+```csharp C#
+using OpenAI;
+
+var client = new OpenAIClient("sk-proj-...");
+```
+
+</CodeGroup>
+
+<Warning>
+Never commit API keys to source control. Always use environment variables or secure secret management.
+</Warning>
+
+## OpenAI Chat Client
+
+The Chat Client provides direct access to OpenAI chat completions.
+
+### Basic Usage
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from agent_framework.openai import OpenAIChatClient
+
+async def main():
+    # Create agent with OpenAI Chat Client
+    agent = OpenAIChatClient().as_agent(
+        name="Assistant",
+        instructions="You are a helpful assistant.",
+    )
+    
+    # Non-streaming response
+    result = await agent.run("What is the capital of France?")
+    print(result)
+
+asyncio.run(main())
+```
+
+```csharp C#
+using OpenAI;
+using Microsoft.Agents.AI;
+
+var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+var model = Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL_NAME") ?? "gpt-4o-mini";
+
+var agent = new OpenAIClient(apiKey)
+    .GetChatClient(model)
+    .AsAIAgent(instructions: "You are a helpful assistant.", name: "Assistant");
+
+var result = await agent.RunAsync("What is the capital of France?");
+Console.WriteLine(result);
+```
+
+</CodeGroup>
+
+### Configuration
+
+<Tabs>
+  <Tab title="Environment Variables">
+    ```bash
+    OPENAI_API_KEY=sk-proj-...
+    OPENAI_CHAT_MODEL_ID=gpt-4o
+    OPENAI_ORGANIZATION=org-...
+    ```
+  </Tab>
+  <Tab title="Explicit Configuration">
+    <CodeGroup>
+    ```python Python
+    from agent_framework.openai import OpenAIChatClient
+    
+    client = OpenAIChatClient(
+        api_key="sk-proj-...",
+        model_id="gpt-4o",
+        organization="org-...",
+    )
+    ```
+    ```csharp C#
+    var client = new OpenAIClient(
+        apiKey: "sk-proj-...",
+        organization: "org-..."
+    );
+    ```
+    </CodeGroup>
+  </Tab>
+</Tabs>
+
+### Streaming Responses
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from agent_framework.openai import OpenAIChatClient
+
+async def main():
+    agent = OpenAIChatClient().as_agent(
+        instructions="You are a helpful assistant.",
+    )
+    
+    # Streaming response
+    query = "Write a short story about AI agents."
+    print("Agent: ", end="", flush=True)
+    async for chunk in agent.run(query, stream=True):
+        if chunk.text:
+            print(chunk.text, end="", flush=True)
+    print()
+
+asyncio.run(main())
+```
+
+```csharp C#
+using OpenAI;
+using Microsoft.Agents.AI;
+
+var agent = new OpenAIClient(apiKey)
+    .GetChatClient("gpt-4o")
+    .AsAIAgent(instructions: "You are a helpful assistant.");
+
+await foreach (var chunk in agent.RunStreamingAsync("Write a short story about AI agents."))
+{
+    if (chunk.Text != null)
+        Console.Write(chunk.Text);
+}
+```
+
+</CodeGroup>
+
+### Function Calling
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from typing import Annotated
+from agent_framework import tool
+from agent_framework.openai import OpenAIChatClient
+
+@tool(approval_mode="never_require")  # Use "always_require" in production
+def get_weather(location: Annotated[str, "City name"]) -> str:
+    """Get the weather for a location."""
+    return f"Weather in {location}: Sunny, 72°F"
+
+async def main():
+    agent = OpenAIChatClient().as_agent(
+        name="WeatherAgent",
+        instructions="You are a weather assistant.",
+        tools=[get_weather],
+    )
+    
+    result = await agent.run("What's the weather in Seattle?")
+    print(result)
+
+asyncio.run(main())
+```
+
+```csharp C#
+using OpenAI;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using System.ComponentModel;
+
+[Description("Get the weather for a location")]
+string GetWeather([Description("City name")] string location)
+{
+    return $"Weather in {location}: Sunny, 72°F";
+}
+
+var agent = new OpenAIClient(apiKey)
+    .GetChatClient("gpt-4o")
+    .AsAIAgent(
+        name: "WeatherAgent",
+        instructions: "You are a weather assistant.",
+        tools: [AIFunctionFactory.Create(GetWeather)]
+    );
+
+var result = await agent.RunAsync("What's the weather in Seattle?");
+Console.WriteLine(result);
+```
+
+</CodeGroup>
+
+## OpenAI Responses Client
+
+The Responses Client provides structured response generation:
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from agent_framework.openai import OpenAIResponsesClient
+
+async def main():
+    agent = OpenAIResponsesClient().as_agent(
+        instructions="You are a helpful assistant.",
+    )
+    
+    result = await agent.run("Explain quantum computing in simple terms.")
+    print(result)
+
+asyncio.run(main())
+```
+
+```csharp C#
+using OpenAI;
+using Microsoft.Agents.AI;
+
+var agent = new OpenAIClient(apiKey)
+    .GetChatClient("gpt-4o")
+    .AsAIAgent(instructions: "You are a helpful assistant.");
+
+var result = await agent.RunAsync("Explain quantum computing in simple terms.");
+Console.WriteLine(result);
+```
+
+</CodeGroup>
+
+## OpenAI Assistants API
+
+The Assistants API provides persistent agents with managed state, code interpreter, and file search capabilities.
+
+### Creating an Assistant
+
+<CodeGroup>
+
+```python Python
+import asyncio
+import os
+from agent_framework.openai import OpenAIAssistantProvider
+from openai import AsyncOpenAI
+
+async def main():
+    client = AsyncOpenAI()
+    provider = OpenAIAssistantProvider(client)
+    
+    # Create a new assistant
+    agent = await provider.create_agent(
+        name="MathTutor",
+        model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4o"),
+        instructions="You are a helpful math tutor.",
+        tools=[...],
+    )
+    
+    try:
+        result = await agent.run("What is 25 * 17?")
+        print(result)
+    finally:
+        # Clean up the assistant
+        await client.beta.assistants.delete(agent.id)
+
+asyncio.run(main())
+```
+
+```csharp C#
+using OpenAI;
+using OpenAI.Assistants;
+using Microsoft.Agents.AI;
+
+var client = new OpenAIClient(apiKey);
+var assistantClient = client.GetAssistantClient();
+
+// Create a new assistant
+var assistant = await assistantClient.CreateAssistantAsync(
+    model: "gpt-4o",
+    new AssistantCreationOptions
+    {
+        Name = "MathTutor",
+        Instructions = "You are a helpful math tutor."
+    }
+);
+
+try
+{
+    var agent = assistant.Value.AsAIAgent();
+    var result = await agent.RunAsync("What is 25 * 17?");
+    Console.WriteLine(result);
+}
+finally
+{
+    // Clean up the assistant
+    await assistantClient.DeleteAssistantAsync(assistant.Value.Id);
+}
+```
+
+</CodeGroup>
+
+### Using an Existing Assistant
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from agent_framework.openai import OpenAIAssistantProvider
+from openai import AsyncOpenAI
+
+async def main():
+    client = AsyncOpenAI()
+    provider = OpenAIAssistantProvider(client)
+    
+    # Get existing assistant by ID
+    agent = await provider.get_agent(assistant_id="asst_...")
+    
+    result = await agent.run("Hello!")
+    print(result)
+
+asyncio.run(main())
+```
+
+```csharp C#
+using OpenAI;
+using Microsoft.Agents.AI;
+
+var client = new OpenAIClient(apiKey);
+var assistantClient = client.GetAssistantClient();
+
+// Get existing assistant by ID
+var assistant = await assistantClient.GetAssistantAsync("asst_...");
+var agent = assistant.Value.AsAIAgent();
+
+var result = await agent.RunAsync("Hello!");
+Console.WriteLine(result);
+```
+
+</CodeGroup>
+
+### Code Interpreter
+
+Enable code interpreter for Python code execution:
+
+<CodeGroup>
+
+```python Python
+from agent_framework.openai import code_interpreter_tool
+
+agent = await provider.create_agent(
+    name="DataAnalyst",
+    model="gpt-4o",
+    instructions="You are a data analyst.",
+    tools=[code_interpreter_tool()],
+)
+```
+
+```csharp C#
+using OpenAI.Assistants;
+
+var assistant = await assistantClient.CreateAssistantAsync(
+    "gpt-4o",
+    new AssistantCreationOptions
+    {
+        Name = "DataAnalyst",
+        Instructions = "You are a data analyst.",
+        Tools = { new CodeInterpreterToolDefinition() }
+    }
+);
+```
+
+</CodeGroup>
+
+### File Search
+
+Enable file search for RAG capabilities:
+
+<CodeGroup>
+
+```python Python
+from agent_framework.openai import file_search_tool
+
+agent = await provider.create_agent(
+    name="DocumentAssistant",
+    model="gpt-4o",
+    instructions="You help with documents.",
+    tools=[file_search_tool()],
+)
+```
+
+```csharp C#
+using OpenAI.Assistants;
+
+var assistant = await assistantClient.CreateAssistantAsync(
+    "gpt-4o",
+    new AssistantCreationOptions
+    {
+        Name = "DocumentAssistant",
+        Instructions = "You help with documents.",
+        Tools = { new FileSearchToolDefinition() }
+    }
+);
+```
+
+</CodeGroup>
+
+## Available Models
+
+OpenAI offers several model families:
+
+| Model | Context Window | Best For | Function Calling |
+|-------|----------------|----------|------------------|
+| gpt-4o | 128k | Latest flagship, multimodal, vision | ✅ |
+| gpt-4o-mini | 128k | Fast, cost-effective, intelligent | ✅ |
+| gpt-4-turbo | 128k | High performance, vision | ✅ |
+| gpt-4 | 8k | Complex reasoning | ✅ |
+| gpt-3.5-turbo | 16k | Fast, economical | ✅ |
+| o1 | 200k | Advanced reasoning | ❌ |
+| o3-mini | 200k | Cost-effective reasoning | ❌ |
+
+<Note>
+Reasoning models (o1, o3) do not support function calling or streaming. They are optimized for complex reasoning tasks.
+</Note>
+
+## Reasoning Models
+
+OpenAI's o1 and o3 models provide advanced reasoning capabilities:
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from agent_framework.openai import OpenAIResponsesClient
+
+async def main():
+    agent = OpenAIResponsesClient(
+        model_id="o3-mini"  # or "o1-preview", "o1-mini"
+    ).as_agent(
+        instructions="You are a reasoning assistant.",
+    )
+    
+    result = await agent.run(
+        "Solve this logic puzzle: Three people are in a room. "
+        "Alice says Bob is lying. Bob says Charlie is lying. "
+        "Charlie says both Alice and Bob are lying. Who is telling the truth?"
+    )
+    print(result)
+
+asyncio.run(main())
+```
+
+```csharp C#
+using OpenAI;
+using Microsoft.Agents.AI;
+
+var agent = new OpenAIClient(apiKey)
+    .GetChatClient("o3-mini")  // or "o1-preview", "o1-mini"
+    .AsAIAgent(instructions: "You are a reasoning assistant.");
+
+var result = await agent.RunAsync(
+    "Solve this logic puzzle: Three people are in a room. " +
+    "Alice says Bob is lying. Bob says Charlie is lying. " +
+    "Charlie says both Alice and Bob are lying. Who is telling the truth?"
+);
+Console.WriteLine(result);
+```
+
+</CodeGroup>
+
+<Warning>
+Reasoning models do not support streaming or function calling. They are optimized for complex reasoning tasks that require extended thinking.
+</Warning>
+
+## Vision Capabilities
+
+GPT-4o and GPT-4-turbo support image inputs:
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from agent_framework import Message
+from agent_framework.openai import OpenAIChatClient
+
+async def main():
+    agent = OpenAIChatClient(model_id="gpt-4o").as_agent(
+        instructions="You analyze images.",
+    )
+    
+    message = Message(
+        role="user",
+        text="What's in this image?",
+        images=["https://example.com/image.jpg"],
+    )
+    
+    result = await agent.run(message)
+    print(result)
+
+asyncio.run(main())
+```
+
+```csharp C#
+using OpenAI;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+var agent = new OpenAIClient(apiKey)
+    .GetChatClient("gpt-4o")
+    .AsAIAgent(instructions: "You analyze images.");
+
+var message = new ChatMessage(
+    ChatRole.User,
+    [
+        new TextContent("What's in this image?"),
+        new ImageContent(new Uri("https://example.com/image.jpg"))
+    ]
+);
+
+var result = await agent.RunAsync([message]);
+Console.WriteLine(result);
+```
+
+</CodeGroup>
+
+## Structured Outputs
+
+Force the model to return structured JSON outputs:
+
+<CodeGroup>
+
+```python Python
+import asyncio
+from pydantic import BaseModel
+from agent_framework.openai import OpenAIChatClient
+
+class WeatherResponse(BaseModel):
+    location: str
+    temperature: float
+    condition: str
+    forecast: str
+
+async def main():
+    agent = OpenAIChatClient().as_agent(
+        instructions="You are a weather assistant.",
+        response_format=WeatherResponse,
+    )
+    
+    result = await agent.run("What's the weather in Paris?")
+    # result is parsed as WeatherResponse
+    print(f"Location: {result.location}")
+    print(f"Temperature: {result.temperature}°F")
+    print(f"Condition: {result.condition}")
+
+asyncio.run(main())
+```
+
+```csharp C#
+using OpenAI;
+using Microsoft.Agents.AI;
+
+public class WeatherResponse
+{
+    public string Location { get; set; }
+    public double Temperature { get; set; }
+    public string Condition { get; set; }
+    public string Forecast { get; set; }
+}
+
+var agent = new OpenAIClient(apiKey)
+    .GetChatClient("gpt-4o")
+    .AsAIAgent(
+        instructions: "You are a weather assistant.",
+        responseFormat: typeof(WeatherResponse)
+    );
+
+var result = await agent.RunAsync("What's the weather in Paris?");
+// result is parsed as WeatherResponse
+var weather = JsonSerializer.Deserialize<WeatherResponse>(result);
+Console.WriteLine($"Location: {weather.Location}");
+Console.WriteLine($"Temperature: {weather.Temperature}°F");
+```
+
+</CodeGroup>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Secure API Key Management">
+    Never hardcode API keys in your source code:
+    
+    1. Use environment variables for API keys
+    2. Use `.env` files locally (add to `.gitignore`)
+    3. Use Azure Key Vault or similar for production
+    4. Rotate API keys regularly
+    5. Use project-scoped keys when possible
+  </Accordion>
+  
+  <Accordion title="Choose the Right Model">
+    - Use **gpt-4o-mini** for development and testing
+    - Use **gpt-4o** for production workloads requiring maximum quality
+    - Use **gpt-3.5-turbo** for simple tasks where cost is critical
+    - Use **o1/o3** for complex reasoning tasks that don't need function calling
+  </Accordion>
+  
+  <Accordion title="Handle Rate Limits">
+    OpenAI has rate limits based on your tier:
+    
+    1. Implement exponential backoff retry logic
+    2. Monitor usage in the OpenAI dashboard
+    3. Consider upgrading your tier for higher limits
+    4. Use batch processing for high-volume workloads
+  </Accordion>
+  
+  <Accordion title="Optimize Token Usage">
+    Tokens directly impact cost:
+    
+    1. Keep system prompts concise but clear
+    2. Use smaller models when appropriate
+    3. Implement conversation pruning for long sessions
+    4. Monitor token usage in responses
+    5. Use structured outputs to reduce verbose responses
+  </Accordion>
+  
+  <Accordion title="Clean Up Resources">
+    When using the Assistants API:
+    
+    1. Delete assistants when no longer needed
+    2. Clean up uploaded files
+    3. Delete old threads to manage costs
+    4. Use try-finally blocks to ensure cleanup
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Invalid API Key">
+    If you see API key errors:
+    
+    1. Verify the API key is correct and active
+    2. Check if the key has expired
+    3. Ensure the key has proper permissions
+    4. Verify organization ID if using organization keys
+  </Accordion>
+  
+  <Accordion title="Rate Limit Errors">
+    If you're hitting rate limits:
+    
+    1. Check your usage tier at platform.openai.com
+    2. Implement exponential backoff
+    3. Reduce request frequency
+    4. Consider upgrading to a higher tier
+    5. Use batch API for non-urgent requests
+  </Accordion>
+  
+  <Accordion title="Model Not Available">
+    If the model is not available:
+    
+    1. Check if you have access to the model
+    2. Verify the model name is correct
+    3. Some models require waitlist access
+    4. Check if your account tier supports the model
+  </Accordion>
+  
+  <Accordion title="Function Calling Not Working">
+    If function calling isn't working:
+    
+    1. Verify the model supports function calling (o1/o3 don't)
+    2. Check function schema is valid JSON Schema
+    3. Ensure function descriptions are clear
+    4. Verify parameter types match the schema
+  </Accordion>
+</AccordionGroup>
+
+## Cost Optimization
+
+OpenAI pricing varies by model. Here are tips to optimize costs:
+
+1. **Use appropriate models**: Don't use GPT-4o when GPT-4o-mini or GPT-3.5-turbo will suffice
+2. **Monitor token usage**: Track input and output tokens to identify optimization opportunities
+3. **Optimize prompts**: Shorter, clearer prompts use fewer tokens
+4. **Cache common responses**: Cache responses for frequently asked questions
+5. **Use batch API**: For non-time-sensitive workloads, batch API is cheaper
+
+<Note>
+Check current pricing at [openai.com/pricing](https://openai.com/pricing)
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Function Tools" icon="wrench" href="/concepts/tools">
+    Add function calling capabilities to your agents
+  </Card>
+  <Card title="Sessions & Memory" icon="comments" href="/concepts/sessions">
+    Manage multi-turn conversations with memory
+  </Card>
+  <Card title="Tools" icon="wrench" href="/concepts/tools">
+    Add function calling to your agents
+  </Card>
+  <Card title="Workflows" icon="diagram-project" href="/workflows/introduction">
+    Build multi-agent workflows
+  </Card>
+</CardGroup>

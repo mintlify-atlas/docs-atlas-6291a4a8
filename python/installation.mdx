@@ -1,0 +1,151 @@
+---
+title: Installation
+description: Install the Microsoft Agent Framework Python SDK and set up your development environment
+---
+
+## Prerequisites
+
+Before installing the Agent Framework, ensure you have:
+
+- **Python 3.10 or higher** installed on your system
+- **pip** package manager (included with Python)
+- An **Azure subscription** (for Azure OpenAI integration)
+
+<Note>
+The Agent Framework supports Windows, macOS, and Linux operating systems.
+</Note>
+
+## Install the Package
+
+Install the core Agent Framework package using pip:
+
+```bash
+pip install agent-framework-core --pre
+```
+
+<Warning>
+The `--pre` flag is required during the preview period to install pre-release versions.
+</Warning>
+
+### Optional Packages
+
+Depending on your use case, you may want to install additional packages:
+
+<CodeGroup>
+
+```bash Azure AI Integration
+pip install agent-framework-azure-ai --pre
+```
+
+```bash All Packages
+pip install agent-framework-core[all] --pre
+```
+
+```bash Specific Providers
+pip install agent-framework-anthropic --pre
+pip install agent-framework-ollama --pre
+```
+
+</CodeGroup>
+
+## Set Up Authentication
+
+The Agent Framework uses Azure CLI for authentication with Azure OpenAI services.
+
+<Steps>
+
+<Step title="Install Azure CLI">
+If you haven't already, install the [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli).
+</Step>
+
+<Step title="Sign in to Azure">
+Authenticate with your Azure account:
+
+```bash
+az login
+```
+
+This command opens your browser to complete the sign-in process.
+</Step>
+
+<Step title="Set Your Subscription (Optional)">
+If you have multiple subscriptions, set the active one:
+
+```bash
+az account set --subscription "your-subscription-id"
+```
+</Step>
+
+</Steps>
+
+## Configure Environment Variables
+
+Create a `.env` file in your project root to store configuration values:
+
+```bash .env
+# Azure AI Foundry Project
+AZURE_AI_PROJECT_ENDPOINT="https://your-project.api.azureml.ms"
+AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="gpt-4o"
+
+# Azure OpenAI (alternative)
+AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com"
+AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="gpt-4o"
+
+# OpenAI (alternative)
+OPENAI_API_KEY="sk-..."
+OPENAI_CHAT_MODEL_ID="gpt-4o"
+OPENAI_RESPONSES_MODEL_ID="gpt-4o"
+```
+
+<Note>
+You only need to configure the variables for the service you plan to use (Azure AI Foundry, Azure OpenAI, or OpenAI).
+</Note>
+
+### Install python-dotenv
+
+To load environment variables from your `.env` file, install the `python-dotenv` package:
+
+```bash
+pip install python-dotenv
+```
+
+Then load the variables in your Python code:
+
+```python
+from dotenv import load_dotenv
+
+load_dotenv()
+```
+
+<Note>
+The `python-dotenv` package is automatically included as a dependency of `agent-framework-core`.
+</Note>
+
+## Verify Installation
+
+Verify your installation by checking the package version:
+
+```bash
+pip show agent-framework-core
+```
+
+You should see output similar to:
+
+```
+Name: agent-framework-core
+Version: 1.0.0rc3
+Summary: Microsoft Agent Framework for building AI Agents with Python
+Home-page: https://aka.ms/agent-framework
+...
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/python/quickstart">
+    Create your first agent in minutes
+  </Card>
+  <Card title="First Agent" icon="robot" href="/python/first-agent">
+    Build an agent with tools and function calling
+  </Card>
+</CardGroup>

@@ -1,0 +1,591 @@
+---
+title: 'Workflows'
+description: 'Build complex agentic workflows with executors, edges, and conditional routing'
+---
+
+## Overview
+
+Workflows in the Microsoft Agent Framework .NET SDK enable you to build sophisticated multi-step agentic applications. Workflows orchestrate multiple processing units (executors) connected by edges, supporting patterns like sequential processing, parallel execution, conditional routing, and loops.
+
+## Core Concepts
+
+### Executors
+
+**Executors** are the processing units in a workflow. Each executor:
+
+- Accepts strongly-typed input
+- Performs processing (calls an agent, transforms data, etc.)
+- Returns strongly-typed output
+- Can be stateful or stateless
+
+```csharp
+public abstract class Executor<TIn, TOut>
+{
+    public abstract ValueTask<TOut> HandleAsync(
+        TIn message,
+        IWorkflowContext context,
+        CancellationToken cancellationToken = default);
+}
+```
+
+### Edges
+
+**Edges** define the data flow between executors. They determine:
+
+- Which executors are connected
+- The order of execution
+- Conditional routing logic
+
+### WorkflowBuilder
+
+**WorkflowBuilder** is the fluent API for constructing workflows:
+
+```csharp
+var builder = new WorkflowBuilder(entryPointExecutor);
+builder.AddEdge(executorA, executorB);
+builder.WithOutputFrom(finalExecutor);
+var workflow = builder.Build();
+```
+
+## Creating Executors
+
+### Custom Executor Class
+
+```csharp
+using Microsoft.Agents.AI.Workflows;
+
+public class UppercaseExecutor : Executor<string, string>
+{
+    public UppercaseExecutor() : base("UppercaseExecutor") { }
+    
+    public override ValueTask<string> HandleAsync(
+        string message,
+        IWorkflowContext context,
+        CancellationToken cancellationToken = default)
+    {
+        return ValueTask.FromResult(message.ToUpperInvariant());
+    }
+}
+```
+
+### From Lambda Functions
+
+Use `BindAsExecutor()` to create executors from lambda functions:
+
+```csharp
+Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+Func<string, string> reverseFunc = s => string.Concat(s.Reverse());
+var reverse = reverseFunc.BindAsExecutor("ReverseExecutor");
+```
+
+### From Async Functions
+
+```csharp
+Func<string, Task<string>> asyncFunc = async s =>
+{
+    await Task.Delay(100);
+    return s.ToUpperInvariant();
+};
+var executor = asyncFunc.BindAsExecutor("AsyncExecutor");
+```
+
+## Building Workflows
+
+### Simple Sequential Workflow
+
+```csharp
+using Microsoft.Agents.AI.Workflows;
+
+// Create executors
+Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+Func<string, string> reverseFunc = s => string.Concat(s.Reverse());
+var reverse = reverseFunc.BindAsExecutor("ReverseExecutor");
+
+// Build workflow: input -> uppercase -> reverse -> output
+var builder = new WorkflowBuilder(uppercase);
+builder.AddEdge(uppercase, reverse);
+builder.WithOutputFrom(reverse);
+var workflow = builder.Build();
+
+// Execute workflow
+await using Run run = await InProcessExecution.RunAsync(
+    workflow, 
+    "Hello, World!");
+
+foreach (WorkflowEvent evt in run.NewEvents)
+{
+    if (evt is ExecutorCompletedEvent completed)
+    {
+        Console.WriteLine($"{completed.ExecutorId}: {completed.Data}");
+    }
+}
+// Output:
+// UppercaseExecutor: HELLO, WORLD!
+// ReverseExecutor: !DLROW ,OLLEH
+```
+
+### Workflow with Agents
+
+Integrate AI agents into workflows:
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Workflows;
+
+// Create an agent
+AIAgent writerAgent = chatClient.AsAIAgent(
+    name: "Writer",
+    instructions: "You are a creative writer. Write short stories.");
+
+AIAgent editorAgent = chatClient.AsAIAgent(
+    name: "Editor",
+    instructions: "You are an editor. Improve the writing quality.");
+
+// Bind agents as executors
+var writer = writerAgent.BindAsExecutor("WriterStep");
+var editor = editorAgent.BindAsExecutor("EditorStep");
+
+// Build workflow
+var builder = new WorkflowBuilder(writer);
+builder.AddEdge(writer, editor);
+builder.WithOutputFrom(editor);
+var workflow = builder.Build();
+
+// Execute
+await using var run = await InProcessExecution.RunAsync(
+    workflow,
+    "Write a short story about a robot learning to paint.");
+
+foreach (var evt in run.NewEvents)
+{
+    if (evt is AgentResponseEvent agentEvent)
+    {
+        Console.WriteLine($"{agentEvent.AgentName}: {agentEvent.Response.Text}");
+    }
+}
+```
+
+## Streaming Workflow Events
+
+Stream workflow events as they occur:
+
+```csharp
+await using var run = await InProcessExecution.RunAsync(workflow, input);
+
+await foreach (var evt in run.StreamAsync())
+{
+    switch (evt)
+    {
+        case ExecutorStartedEvent started:
+            Console.WriteLine($"Started: {started.ExecutorId}");
+            break;
+        
+        case ExecutorCompletedEvent completed:
+            Console.WriteLine($"Completed: {completed.ExecutorId}");
+            Console.WriteLine($"Result: {completed.Data}");
+            break;
+        
+        case AgentResponseUpdateEvent update:
+            Console.Write(update.Update.Text);
+            break;
+        
+        case ExecutorFailedEvent failed:
+            Console.WriteLine($"Error: {failed.Exception.Message}");
+            break;
+    }
+}
+```
+
+## Parallel Execution (Fan-Out/Fan-In)
+
+Execute multiple executors in parallel:
+
+```csharp
+// Create parallel executors
+var executor1 = func1.BindAsExecutor("Executor1");
+var executor2 = func2.BindAsExecutor("Executor2");
+var executor3 = func3.BindAsExecutor("Executor3");
+
+// Create aggregator to collect results
+var aggregator = new AggregatingExecutor<string, string>("Aggregator");
+
+// Build workflow with fan-out pattern
+var builder = new WorkflowBuilder(inputExecutor);
+builder.AddEdge(inputExecutor, executor1);
+builder.AddEdge(inputExecutor, executor2);
+builder.AddEdge(inputExecutor, executor3);
+
+// Fan-in: collect results
+builder.AddEdge(executor1, aggregator);
+builder.AddEdge(executor2, aggregator);
+builder.AddEdge(executor3, aggregator);
+
+builder.WithOutputFrom(aggregator);
+var workflow = builder.Build();
+```
+
+## Conditional Edges
+
+Route based on executor output:
+
+```csharp
+public class RouterExecutor : Executor<int, string>
+{
+    public RouterExecutor() : base("Router") { }
+    
+    public override ValueTask<string> HandleAsync(
+        int value,
+        IWorkflowContext context,
+        CancellationToken cancellationToken = default)
+    {
+        return ValueTask.FromResult(value > 0 ? "positive" : "negative");
+    }
+}
+
+// Build workflow with conditional routing
+var router = new RouterExecutor();
+var positiveHandler = positiveFunc.BindAsExecutor("PositiveHandler");
+var negativeHandler = negativeFunc.BindAsExecutor("NegativeHandler");
+
+var builder = new WorkflowBuilder(router);
+
+// Add conditional edges
+builder.AddEdge(
+    router, 
+    positiveHandler, 
+    condition: output => output == "positive");
+
+builder.AddEdge(
+    router, 
+    negativeHandler, 
+    condition: output => output == "negative");
+
+builder.WithOutputFrom(positiveHandler);
+builder.WithOutputFrom(negativeHandler);
+var workflow = builder.Build();
+```
+
+## Loops
+
+Create iterative workflows:
+
+```csharp
+public class CounterExecutor : Executor<int, int>
+{
+    public CounterExecutor() : base("Counter") { }
+    
+    public override ValueTask<int> HandleAsync(
+        int count,
+        IWorkflowContext context,
+        CancellationToken cancellationToken = default)
+    {
+        return ValueTask.FromResult(count + 1);
+    }
+}
+
+var counter = new CounterExecutor();
+var checker = new CheckerExecutor(); // Checks if count < 5
+
+var builder = new WorkflowBuilder(counter);
+
+// Create loop: counter -> checker -> (back to counter if < 5)
+builder.AddEdge(counter, checker);
+builder.AddEdge(
+    checker, 
+    counter, 
+    condition: count => count < 5);
+
+builder.WithOutputFrom(checker);
+var workflow = builder.Build();
+```
+
+## Writer-Critic Pattern
+
+Iterative refinement with quality gates:
+
+```csharp
+// Create agents
+AIAgent writerAgent = chatClient.AsAIAgent(
+    name: "Writer",
+    instructions: "Generate creative content based on feedback.");
+
+AIAgent criticAgent = chatClient.AsAIAgent(
+    name: "Critic",
+    instructions: "Review content and provide feedback. Rate quality 1-10.");
+
+// Bind as executors
+var writer = writerAgent.BindAsExecutor("Writer");
+var critic = criticAgent.BindAsExecutor("Critic");
+
+// Quality gate executor
+var qualityGate = new QualityGateExecutor(); // Checks if rating >= 8
+
+var builder = new WorkflowBuilder(writer);
+builder.AddEdge(writer, critic);
+builder.AddEdge(critic, qualityGate);
+
+// Loop back if quality not met (max 3 iterations)
+builder.AddEdge(
+    qualityGate,
+    writer,
+    condition: result => result.Quality < 8 && result.Iteration < 3);
+
+builder.WithOutputFrom(qualityGate);
+var workflow = builder.Build();
+
+await using var run = await InProcessExecution.RunAsync(
+    workflow,
+    "Write a haiku about AI");
+```
+
+## Checkpointing
+
+Save and restore workflow state:
+
+```csharp
+using Microsoft.Agents.AI.Workflows.Checkpointing;
+
+// Create checkpointer
+var checkpointer = new InMemoryCheckpointer();
+
+// Run workflow with checkpointing
+await using var run = await InProcessExecution.RunAsync(
+    workflow,
+    input,
+    checkpointer: checkpointer);
+
+// Save checkpoint
+var checkpointId = await run.CheckpointAsync();
+
+// Later, restore from checkpoint
+await using var restoredRun = await InProcessExecution.ResumeAsync(
+    workflow,
+    checkpointId,
+    checkpointer: checkpointer);
+```
+
+## Human-in-the-Loop
+
+Pause workflow for human input:
+
+```csharp
+public class ApprovalExecutor : Executor<string, string>
+{
+    public ApprovalExecutor() : base("Approval") { }
+    
+    public override async ValueTask<string> HandleAsync(
+        string content,
+        IWorkflowContext context,
+        CancellationToken cancellationToken = default)
+    {
+        // Request human approval
+        var approvalRequest = new ApprovalRequestEvent
+        {
+            Content = content,
+            RequestId = Guid.NewGuid().ToString()
+        };
+        
+        context.AddEvent(approvalRequest);
+        
+        // Wait for human response via input port
+        var response = await context.WaitForInputAsync<ApprovalResponse>(
+            approvalRequest.RequestId,
+            cancellationToken);
+        
+        return response.Approved ? content : "REJECTED";
+    }
+}
+
+// Build workflow with approval
+var builder = new WorkflowBuilder(processorExecutor);
+builder.AddEdge(processorExecutor, approvalExecutor);
+builder.AddEdge(approvalExecutor, finalExecutor);
+builder.WithOutputFrom(finalExecutor);
+var workflow = builder.Build();
+
+// Execute workflow
+await using var run = await InProcessExecution.RunAsync(workflow, input);
+
+// Monitor for approval requests
+await foreach (var evt in run.StreamAsync())
+{
+    if (evt is ApprovalRequestEvent approvalReq)
+    {
+        Console.WriteLine($"Approval needed: {approvalReq.Content}");
+        Console.Write("Approve? (y/n): ");
+        var approved = Console.ReadLine()?.ToLower() == "y";
+        
+        // Send approval response
+        await run.SendInputAsync(
+            approvalReq.RequestId,
+            new ApprovalResponse { Approved = approved });
+    }
+}
+```
+
+## Shared State
+
+Share state between executors:
+
+```csharp
+public class StateExecutor : Executor<string, string>
+{
+    public override ValueTask<string> HandleAsync(
+        string message,
+        IWorkflowContext context,
+        CancellationToken cancellationToken = default)
+    {
+        // Access shared state
+        var state = context.GetState<SharedData>("myState") 
+            ?? new SharedData();
+        
+        state.Counter++;
+        state.Messages.Add(message);
+        
+        // Update shared state
+        context.SetState("myState", state);
+        
+        return ValueTask.FromResult($"Processed {state.Counter} messages");
+    }
+}
+
+public class SharedData
+{
+    public int Counter { get; set; }
+    public List<string> Messages { get; set; } = new();
+}
+```
+
+## Sub-Workflows
+
+Compose workflows hierarchically:
+
+```csharp
+// Create sub-workflow
+var subBuilder = new WorkflowBuilder(subExecutor1);
+subBuilder.AddEdge(subExecutor1, subExecutor2);
+subBuilder.WithOutputFrom(subExecutor2);
+var subWorkflow = subBuilder.Build();
+
+// Bind sub-workflow as executor
+var subWorkflowExecutor = subWorkflow.BindAsExecutor("SubWorkflow");
+
+// Use in parent workflow
+var parentBuilder = new WorkflowBuilder(parentExecutor1);
+parentBuilder.AddEdge(parentExecutor1, subWorkflowExecutor);
+parentBuilder.AddEdge(subWorkflowExecutor, parentExecutor2);
+parentBuilder.WithOutputFrom(parentExecutor2);
+var parentWorkflow = parentBuilder.Build();
+```
+
+## Workflow Visualization
+
+Generate workflow diagrams:
+
+```csharp
+using Microsoft.Agents.AI.Workflows.Visualization;
+
+// Generate Mermaid diagram
+string mermaid = workflow.ToMermaid();
+Console.WriteLine(mermaid);
+
+// Generate DOT graph
+string dot = workflow.ToDot();
+File.WriteAllText("workflow.dot", dot);
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Keep Executors Focused">
+    Each executor should have a single, well-defined responsibility. Break complex logic into multiple executors.
+  </Accordion>
+  
+  <Accordion title="Use Strong Types">
+    Leverage .NET's type system with `Executor<TIn, TOut>` to catch errors at compile time:
+    
+    ```csharp
+    public class Executor1 : Executor<string, int> { }
+    public class Executor2 : Executor<int, string> { }
+    
+    // Type-safe edge
+    builder.AddEdge(executor1, executor2); // TOut of executor1 matches TIn of executor2
+    ```
+  </Accordion>
+  
+  <Accordion title="Handle Errors Gracefully">
+    Implement error handling in executors:
+    
+    ```csharp
+    public override async ValueTask<string> HandleAsync(
+        string input,
+        IWorkflowContext context,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await ProcessAsync(input);
+        }
+        catch (Exception ex)
+        {
+            context.AddEvent(new ErrorEvent { Error = ex.Message });
+            return "ERROR";
+        }
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Add Checkpoints for Long Workflows">
+    Use checkpointing for workflows that take significant time or process critical data.
+  </Accordion>
+  
+  <Accordion title="Monitor Workflow Events">
+    Subscribe to workflow events for observability:
+    
+    ```csharp
+    await foreach (var evt in run.StreamAsync())
+    {
+        Logger.LogInformation(
+            "Event: {Type} at {Time}",
+            evt.GetType().Name,
+            DateTime.UtcNow);
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Use Conditional Edges for Complex Routing">
+    Prefer conditional edges over complex executor logic for routing decisions.
+  </Accordion>
+  
+  <Accordion title="Limit Loop Iterations">
+    Always include iteration limits in loops to prevent infinite execution:
+    
+    ```csharp
+    builder.AddEdge(
+        executor,
+        loopExecutor,
+        condition: state => state.Iteration < MAX_ITERATIONS);
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Declarative Workflows" icon="file-code" href="/dotnet/declarative">
+    Define workflows using YAML
+  </Card>
+  <Card title="Durable Workflows" icon="server" href="/dotnet/durable-workflows">
+    Build reliable, resumable workflows
+  </Card>
+  <Card title="Multi-Agent Patterns" icon="users" href="/concepts/multi-agent">
+    Common agentic workflow patterns
+  </Card>
+  <Card title="Observability" icon="chart-line" href="/dotnet/observability">
+    Monitor and debug workflows
+  </Card>
+</CardGroup>

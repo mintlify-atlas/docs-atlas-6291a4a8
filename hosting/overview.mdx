@@ -1,0 +1,403 @@
+---
+title: 'Hosting & Deployment Overview'
+description: 'Deploy agents to production with Azure Functions, DurableTask, and A2A protocol'
+---
+
+## Overview
+
+The Microsoft Agent Framework provides multiple hosting options for deploying agents to production environments. Whether you need stateless HTTP endpoints, durable orchestrations, or agent-to-agent communication, the framework offers flexible deployment patterns.
+
+## Hosting Options
+
+### Azure Functions
+
+Host agents as HTTP-accessible services using Azure Functions with built-in scaling, monitoring, and Azure integration.
+
+**Best for:**
+- Stateless request/response patterns
+- HTTP API endpoints
+- Serverless deployments
+- Azure ecosystem integration
+
+**Key Features:**
+- Auto-generated HTTP endpoints per agent
+- Built-in health checks
+- Session management
+- Multi-agent hosting
+
+[Learn more about Azure Functions hosting →](/hosting/azure-functions)
+
+### DurableTask Integration
+
+Leverage Durable Functions and DurableTask for long-running workflows, orchestrations, and stateful agent execution.
+
+**Best for:**
+- Long-running workflows
+- Multi-agent orchestrations
+- Human-in-the-loop patterns
+- Reliable state management
+
+**Key Features:**
+- Durable orchestrations
+- Checkpoint and resume
+- Parallel agent execution
+- External event handling
+
+[Learn more about DurableTask →](/hosting/durable-tasks)
+
+### A2A Protocol
+
+Connect agents across systems using the Agent-to-Agent (A2A) protocol for standardized inter-agent communication.
+
+**Best for:**
+- Distributed agent systems
+- Cross-framework communication
+- Agent discovery
+- Standardized interfaces
+
+**Key Features:**
+- Standard protocol compliance
+- Agent discovery via AgentCard
+- Streaming and non-streaming modes
+- Background task handling
+
+[Learn more about A2A Protocol →](/hosting/a2a-protocol)
+
+## Deployment Patterns
+
+### Single Agent Hosting
+
+Deploy a single agent with dedicated endpoints:
+
+<CodeGroup>
+```python Python
+from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
+
+agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    name="Assistant",
+    instructions="You are a helpful assistant."
+)
+
+app = AgentFunctionApp(agents=[agent], enable_health_check=True)
+```
+
+```csharp C#
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Hosting.AzureFunctions;
+
+AIAgent agent = client.GetChatClient(deploymentName)
+    .AsAIAgent("You are a helpful assistant.", "Assistant");
+
+using IHost app = FunctionsApplication
+    .CreateBuilder(args)
+    .ConfigureFunctionsWebApplication()
+    .ConfigureDurableAgents(options => options.AddAIAgent(agent))
+    .Build();
+
+app.Run();
+```
+</CodeGroup>
+
+### Multi-Agent Hosting
+
+Host multiple specialized agents in a single application:
+
+<CodeGroup>
+```python Python
+weather_agent = client.as_agent(
+    name="WeatherAgent",
+    instructions="Provide weather information.",
+    tools=[get_weather]
+)
+
+math_agent = client.as_agent(
+    name="MathAgent",
+    instructions="Help with calculations.",
+    tools=[calculate_tip]
+)
+
+app = AgentFunctionApp(agents=[weather_agent, math_agent])
+```
+
+```csharp C#
+AIAgent weatherAgent = client.GetChatClient(deploymentName)
+    .AsAIAgent("Provide weather information.", "WeatherAgent");
+
+AIAgent mathAgent = client.GetChatClient(deploymentName)
+    .AsAIAgent("Help with calculations.", "MathAgent");
+
+app.ConfigureDurableAgents(options =>
+{
+    options.AddAIAgent(weatherAgent);
+    options.AddAIAgent(mathAgent);
+});
+```
+</CodeGroup>
+
+### Orchestrated Workflows
+
+Create complex workflows with multiple agents:
+
+<CodeGroup>
+```python Python
+@app.orchestration_trigger(context_name="context")
+def agent_workflow(context: DurableOrchestrationContext):
+    """Sequential agent execution with shared session."""
+    agent = app.get_agent(context, "WriterAgent")
+    session = agent.create_session()
+    
+    # First pass
+    initial = yield agent.run(
+        messages="Write a sentence about AI.",
+        session=session
+    )
+    
+    # Second pass with context
+    refined = yield agent.run(
+        messages=f"Improve this: {initial.text}",
+        session=session
+    )
+    
+    return refined.text
+```
+
+```csharp C#
+[Function(nameof(AgentOrchestration))]
+public static async Task<string> AgentOrchestration(
+    [OrchestrationTrigger] TaskOrchestrationContext context)
+{
+    var agent = context.GetAgent("WriterAgent");
+    var session = agent.CreateSession();
+    
+    // First pass
+    var initial = await agent.RunAsync(
+        "Write a sentence about AI.",
+        session: session);
+    
+    // Second pass with context
+    var refined = await agent.RunAsync(
+        $"Improve this: {initial.Text}",
+        session: session);
+    
+    return refined.Text;
+}
+```
+</CodeGroup>
+
+## Configuration
+
+### Environment Variables
+
+All hosting patterns require Azure OpenAI configuration:
+
+```bash
+export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
+export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
+# Optional: Use API key instead of Azure CLI authentication
+export AZURE_OPENAI_API_KEY="your-api-key"
+```
+
+### Azure Functions Configuration
+
+For Azure Functions, configure `local.settings.json`:
+
+<CodeGroup>
+```json Python
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "DURABLE_TASK_SCHEDULER_CONNECTION_STRING": "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None",
+    "TASKHUB_NAME": "default",
+    "AZURE_OPENAI_ENDPOINT": "<AZURE_OPENAI_ENDPOINT>",
+    "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME": "<AZURE_OPENAI_CHAT_DEPLOYMENT_NAME>"
+  }
+}
+```
+
+```json C#
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "DURABLE_TASK_SCHEDULER_CONNECTION_STRING": "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None",
+    "AZURE_OPENAI_ENDPOINT": "<AZURE_OPENAI_ENDPOINT>",
+    "AZURE_OPENAI_DEPLOYMENT_NAME": "<AZURE_OPENAI_DEPLOYMENT_NAME>"
+  }
+}
+```
+</CodeGroup>
+
+## Prerequisites
+
+### Development Tools
+
+- **Azure Functions Core Tools**: [Install v4.x](https://learn.microsoft.com/azure/azure-functions/functions-run-local)
+- **Azure CLI**: For authentication (`az login`)
+- **Docker**: For local emulators (Azurite, DTS)
+
+### Azure Services
+
+- **Azure OpenAI Service**: Deploy a chat model (gpt-4o-mini or better)
+- **Azure Storage**: Required for Azure Functions state
+- **Durable Task Scheduler** (optional): For orchestrations
+
+### Local Emulators
+
+Start Azurite for Azure Storage emulation:
+
+```bash
+docker run -d --name storage-emulator -p 10000:10000 -p 10001:10001 -p 10002:10002 mcr.microsoft.com/azure-storage/azurite
+```
+
+Start Durable Task Scheduler emulator:
+
+```bash
+docker run -d --name dts-emulator -p 8080:8080 -p 8082:8082 mcr.microsoft.com/dts/dts-emulator:latest
+```
+
+The DTS dashboard will be available at `http://localhost:8082`.
+
+## Authentication
+
+The framework supports multiple authentication methods:
+
+### Azure CLI (Development)
+
+```bash
+az login
+```
+
+<CodeGroup>
+```python Python
+from azure.identity import AzureCliCredential
+
+credential = AzureCliCredential()
+client = AzureOpenAIChatClient(credential=credential)
+```
+
+```csharp C#
+using Azure.Identity;
+
+var credential = new DefaultAzureCredential();
+var client = new AzureOpenAIClient(new Uri(endpoint), credential);
+```
+</CodeGroup>
+
+### API Key (Testing)
+
+<CodeGroup>
+```python Python
+import os
+
+client = AzureOpenAIChatClient(
+    api_key=os.environ["AZURE_OPENAI_API_KEY"]
+)
+```
+
+```csharp C#
+using Azure;
+
+string apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY");
+var client = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new AzureKeyCredential(apiKey));
+```
+</CodeGroup>
+
+### Managed Identity (Production)
+
+<CodeGroup>
+```python Python
+from azure.identity import ManagedIdentityCredential
+
+credential = ManagedIdentityCredential()
+client = AzureOpenAIChatClient(credential=credential)
+```
+
+```csharp C#
+var credential = new ManagedIdentityCredential();
+var client = new AzureOpenAIClient(new Uri(endpoint), credential);
+```
+</CodeGroup>
+
+<Warning>
+**Production Considerations**: `DefaultAzureCredential` is convenient for development but may cause latency in production due to credential probing. Use specific credentials like `ManagedIdentityCredential` for production deployments.
+</Warning>
+
+## Testing Deployed Agents
+
+Test HTTP endpoints using curl, REST clients, or HTTP files:
+
+```bash
+# Test single agent
+curl -X POST http://localhost:7071/api/agents/Assistant/run \
+  -H "Content-Type: text/plain" \
+  -d "What is machine learning?"
+
+# Test with JSON
+curl -X POST http://localhost:7071/api/agents/Assistant/run \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Explain AI", "session_id": "user-123"}'
+
+# Test orchestration
+curl -X POST http://localhost:7071/api/orchestration/run
+```
+
+## Monitoring and Observability
+
+### Azure Application Insights
+
+Enable Application Insights for production monitoring:
+
+```json
+{
+  "Values": {
+    "APPLICATIONINSIGHTS_CONNECTION_STRING": "InstrumentationKey=..."
+  }
+}
+```
+
+### Logging
+
+Configure logging levels in `host.json`:
+
+```json
+{
+  "version": "2.0",
+  "logging": {
+    "logLevel": {
+      "default": "Information",
+      "Microsoft.Agents": "Debug"
+    }
+  }
+}
+```
+
+### DTS Dashboard
+
+Monitor orchestrations at `http://localhost:8082` (local) or your DTS endpoint (Azure).
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Azure Functions" icon="cloud" href="/hosting/azure-functions">
+    Deploy agents as serverless functions
+  </Card>
+  <Card title="DurableTask" icon="arrows-rotate" href="/hosting/durable-tasks">
+    Build long-running workflows
+  </Card>
+  <Card title="A2A Protocol" icon="network-wired" href="/hosting/a2a-protocol">
+    Connect distributed agents
+  </Card>
+</CardGroup>
+
+## Related Resources
+
+- [Azure Functions Documentation](https://learn.microsoft.com/azure/azure-functions/)
+- [Durable Functions Overview](https://learn.microsoft.com/azure/azure-functions/durable/)
+- [A2A Protocol Specification](https://a2a-protocol.org/latest/)
+- [Azure OpenAI Service](https://learn.microsoft.com/azure/ai-services/openai/)

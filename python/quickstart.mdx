@@ -1,0 +1,230 @@
+---
+title: Quickstart
+description: Create your first AI agent with the Microsoft Agent Framework Python SDK
+---
+
+## Overview
+
+This quickstart guide walks you through creating a simple AI agent using the Microsoft Agent Framework. You'll learn how to:
+
+- Create an agent with Azure OpenAI
+- Run the agent with a simple query
+- Use streaming responses
+
+<Note>
+Before starting, ensure you've completed the [Installation](/python/installation) steps and configured your environment variables.
+</Note>
+
+## Create Your First Agent
+
+Let's create a simple agent that can answer questions.
+
+<Steps>
+
+<Step title="Import Required Modules">
+
+Create a new Python file called `hello_agent.py` and import the necessary modules:
+
+```python
+import asyncio
+import os
+
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+```
+
+</Step>
+
+<Step title="Create the Agent">
+
+Create an Azure OpenAI client and configure it as an agent:
+
+```python
+async def main():
+    # Create an Azure CLI credential for authentication
+    credential = AzureCliCredential()
+    
+    # Initialize the Azure OpenAI Responses client
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=credential,
+    )
+
+    # Create an agent with instructions
+    agent = client.as_agent(
+        name="HelloAgent",
+        instructions="You are a friendly assistant. Keep your answers brief.",
+    )
+```
+
+<Note>
+The `as_agent()` method is a convenient way to wrap a chat client with agent capabilities.
+</Note>
+
+</Step>
+
+<Step title="Run the Agent">
+
+Send a message to the agent and print the response:
+
+```python
+    # Non-streaming: get the complete response at once
+    result = await agent.run("What is the capital of France?")
+    print(f"Agent: {result}")
+```
+
+</Step>
+
+<Step title="Add Streaming Support">
+
+For longer responses, use streaming to receive tokens as they're generated:
+
+```python
+    # Streaming: receive tokens as they are generated
+    print("Agent (streaming): ", end="", flush=True)
+    async for chunk in agent.run("Tell me a one-sentence fun fact.", stream=True):
+        if chunk.text:
+            print(chunk.text, end="", flush=True)
+    print()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+</Step>
+
+</Steps>
+
+## Complete Example
+
+Here's the complete code for your first agent:
+
+```python hello_agent.py
+import asyncio
+import os
+
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+async def main():
+    # Create credential and client
+    credential = AzureCliCredential()
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=credential,
+    )
+
+    # Create an agent
+    agent = client.as_agent(
+        name="HelloAgent",
+        instructions="You are a friendly assistant. Keep your answers brief.",
+    )
+
+    # Non-streaming response
+    result = await agent.run("What is the capital of France?")
+    print(f"Agent: {result}")
+
+    # Streaming response
+    print("Agent (streaming): ", end="", flush=True)
+    async for chunk in agent.run("Tell me a one-sentence fun fact.", stream=True):
+        if chunk.text:
+            print(chunk.text, end="", flush=True)
+    print()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+## Run Your Agent
+
+Execute your agent script:
+
+```bash
+python hello_agent.py
+```
+
+You should see output similar to:
+
+```
+Agent: The capital of France is Paris.
+Agent (streaming): Honey never spoils and can remain edible for thousands of years.
+```
+
+## Understanding the Code
+
+<AccordionGroup>
+
+<Accordion title="Why use async/await?">
+The Agent Framework uses asynchronous programming to efficiently handle I/O operations like API calls. All agent operations use `async`/`await` patterns:
+
+- Define async functions with `async def`
+- Call async functions with `await`
+- Run async code with `asyncio.run()`
+
+This allows your application to handle multiple agents and requests concurrently without blocking.
+</Accordion>
+
+<Accordion title="What is AzureCliCredential?">
+`AzureCliCredential` from the `azure-identity` package uses your Azure CLI login for authentication. This means:
+
+- No API keys in your code
+- Uses your existing Azure CLI session (`az login`)
+- Automatically handles token refresh
+- Works seamlessly with Azure services
+</Accordion>
+
+<Accordion title="Streaming vs Non-Streaming">
+**Non-streaming** (`await agent.run()`): 
+- Waits for the complete response
+- Returns the full text at once
+- Best for short responses or when you need the complete answer
+
+**Streaming** (`async for chunk in agent.run(..., stream=True)`): 
+- Returns tokens as they're generated
+- Provides immediate feedback to users
+- Best for longer responses or chat interfaces
+</Accordion>
+
+</AccordionGroup>
+
+## Multi-Turn Conversations
+
+To maintain context across multiple interactions, use an `AgentSession`:
+
+```python
+# Create a session to maintain conversation history
+session = agent.create_session()
+
+# First turn
+result = await agent.run("My name is Alice and I love hiking.", session=session)
+print(f"Agent: {result}")
+
+# Second turn - the agent remembers the context
+result = await agent.run("What do you remember about me?", session=session)
+print(f"Agent: {result}")
+```
+
+<Note>
+The `AgentSession` automatically tracks conversation history, allowing the agent to maintain context across multiple turns.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Build Your First Agent" icon="wrench" href="/python/first-agent">
+    Add tools and function calling to your agent
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/python/concepts/agents">
+    Learn about agents, tools, and middleware
+  </Card>
+</CardGroup>

@@ -1,0 +1,626 @@
+---
+title: Workflows
+description: API reference for agent workflows in Microsoft Agent Framework .NET SDK
+---
+
+# Workflows API Reference
+
+Building and orchestrating multi-agent workflows.
+
+## AgentWorkflowBuilder
+
+Provides utility methods for constructing common patterns of workflows composed of agents.
+
+```csharp
+using Microsoft.Agents.AI.Workflows;
+```
+
+### BuildSequential()
+
+Builds a workflow composed of a pipeline of agents where the output of one agent is the input to the next.
+
+```csharp
+public static Workflow BuildSequential(
+    params IEnumerable<AIAgent> agents
+)
+
+public static Workflow BuildSequential(
+    string workflowName,
+    params IEnumerable<AIAgent> agents
+)
+```
+
+<ParamField path="workflowName" type="string">
+  Optional name for the workflow.
+</ParamField>
+
+<ParamField path="agents" type="IEnumerable<AIAgent>" required>
+  The sequence of agents to compose into a sequential workflow.
+</ParamField>
+
+<ResponseField name="return" type="Workflow">
+  The built workflow composed of the supplied agents, in the order they were provided.
+</ResponseField>
+
+### Example: Sequential Workflow
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Workflows;
+using Microsoft.Extensions.AI;
+
+var chatClient = new OpenAIChatClient(
+    model: "gpt-4",
+    apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+);
+
+// Create specialized agents
+var researchAgent = chatClient.AsAIAgent(
+    instructions: "You are a research agent. Analyze the topic and provide key facts.",
+    name: "Researcher"
+);
+
+var writerAgent = chatClient.AsAIAgent(
+    instructions: "You are a writer. Take the research and write a concise summary.",
+    name: "Writer"
+);
+
+var editorAgent = chatClient.AsAIAgent(
+    instructions: "You are an editor. Polish the writing and ensure it's clear and engaging.",
+    name: "Editor"
+);
+
+// Build a sequential workflow
+var workflow = AgentWorkflowBuilder.BuildSequential(
+    "research-write-edit",
+    researchAgent,
+    writerAgent,
+    editorAgent
+);
+
+// Run the workflow
+var response = await workflow.RunAsync("Write about quantum computing");
+Console.WriteLine(response.Text);
+```
+
+### BuildConcurrent()
+
+Builds a workflow composed of agents that operate concurrently on the same input, aggregating their outputs.
+
+```csharp
+public static Workflow BuildConcurrent(
+    IEnumerable<AIAgent> agents,
+    Func<IList<List<ChatMessage>>, List<ChatMessage>>? aggregator = null
+)
+
+public static Workflow BuildConcurrent(
+    string workflowName,
+    IEnumerable<AIAgent> agents,
+    Func<IList<List<ChatMessage>>, List<ChatMessage>>? aggregator = null
+)
+```
+
+<ParamField path="workflowName" type="string">
+  Optional name for the workflow.
+</ParamField>
+
+<ParamField path="agents" type="IEnumerable<AIAgent>" required>
+  The set of agents to compose into a concurrent workflow.
+</ParamField>
+
+<ParamField path="aggregator" type="Func<IList<List<ChatMessage>>, List<ChatMessage>>?">
+  The aggregation function that accepts a list of output messages from each agent and produces a single result list. If null, the default behavior is to return the last message from each agent.
+</ParamField>
+
+<ResponseField name="return" type="Workflow">
+  The built workflow composed of the supplied concurrent agents.
+</ResponseField>
+
+### Example: Concurrent Workflow
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Workflows;
+using Microsoft.Extensions.AI;
+
+var chatClient = new OpenAIChatClient(
+    model: "gpt-4",
+    apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+);
+
+// Create specialized agents that analyze different aspects
+var technicalAgent = chatClient.AsAIAgent(
+    instructions: "You analyze technical aspects and feasibility.",
+    name: "TechnicalAnalyst"
+);
+
+var businessAgent = chatClient.AsAIAgent(
+    instructions: "You analyze business value and market potential.",
+    name: "BusinessAnalyst"
+);
+
+var riskAgent = chatClient.AsAIAgent(
+    instructions: "You analyze risks and potential issues.",
+    name: "RiskAnalyst"
+);
+
+// Build a concurrent workflow with custom aggregator
+var workflow = AgentWorkflowBuilder.BuildConcurrent(
+    "multi-perspective-analysis",
+    new[] { technicalAgent, businessAgent, riskAgent },
+    aggregator: (allMessages) =>
+    {
+        // Combine all perspectives into a single message
+        var combined = string.Join("\n\n", allMessages
+            .SelectMany(msgs => msgs)
+            .Where(m => m.Role == ChatRole.Assistant)
+            .Select(m => m.Text));
+        
+        return new List<ChatMessage>
+        {
+            new ChatMessage(ChatRole.Assistant, $"Combined Analysis:\n{combined}")
+        };
+    }
+);
+
+// Run the workflow - all agents analyze concurrently
+var response = await workflow.RunAsync(
+    "Evaluate: Building a mobile app for recipe sharing"
+);
+Console.WriteLine(response.Text);
+```
+
+### CreateHandoffBuilderWith()
+
+Creates a workflow builder for handoff-based agent orchestration.
+
+```csharp
+public static HandoffsWorkflowBuilder CreateHandoffBuilderWith(
+    AIAgent initialAgent
+)
+```
+
+<ParamField path="initialAgent" type="AIAgent" required>
+  The agent that will receive inputs provided to the workflow.
+</ParamField>
+
+<ResponseField name="return" type="HandoffsWorkflowBuilder">
+  A builder for creating a workflow based on agent handoffs.
+</ResponseField>
+
+### Remarks
+
+Handoffs between agents are achieved by the current agent invoking an `AITool` provided via `ChatClientAgentOptions.ChatOptions.Tools`. The agent must be capable of understanding and using these tools for handoffs to occur.
+
+### Example: Handoff Workflow
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Workflows;
+using Microsoft.Extensions.AI;
+
+var chatClient = new OpenAIChatClient(
+    model: "gpt-4",
+    apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+);
+
+// Create specialized agents
+var triageAgent = chatClient.AsAIAgent(
+    instructions: @"You are a triage agent. Analyze the request and hand off to:
+        - sales_agent for sales inquiries
+        - support_agent for technical support
+        - billing_agent for billing questions",
+    name: "Triage"
+);
+
+var salesAgent = chatClient.AsAIAgent(
+    instructions: "You are a sales agent. Help with product information and sales.",
+    name: "Sales"
+);
+
+var supportAgent = chatClient.AsAIAgent(
+    instructions: "You are a technical support agent. Help resolve technical issues.",
+    name: "Support"
+);
+
+var billingAgent = chatClient.AsAIAgent(
+    instructions: "You are a billing agent. Help with invoices and payments.",
+    name: "Billing"
+);
+
+// Build handoff workflow
+var workflow = AgentWorkflowBuilder
+    .CreateHandoffBuilderWith(triageAgent)
+    .AddHandoff(salesAgent)
+    .AddHandoff(supportAgent)
+    .AddHandoff(billingAgent)
+    .Build();
+
+// Run the workflow - triage will hand off to appropriate agent
+var response1 = await workflow.RunAsync("I want to buy your product.");
+var response2 = await workflow.RunAsync("I can't log in to my account.");
+var response3 = await workflow.RunAsync("Where is my invoice?");
+```
+
+### CreateGroupChatBuilderWith()
+
+Creates a workflow builder for group chat orchestration with a manager agent.
+
+```csharp
+public static GroupChatWorkflowBuilder CreateGroupChatBuilderWith(
+    Func<IReadOnlyList<AIAgent>, GroupChatManager> managerFactory
+)
+```
+
+<ParamField path="managerFactory" type="Func<IReadOnlyList<AIAgent>, GroupChatManager>" required>
+  Function that creates the `GroupChatManager` for the workflow. The manager is provided with the set of agents participating in the group chat.
+</ParamField>
+
+<ResponseField name="return" type="GroupChatWorkflowBuilder">
+  A builder for creating a group chat workflow.
+</ResponseField>
+
+### Example: Group Chat Workflow
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Workflows;
+using Microsoft.Extensions.AI;
+
+var chatClient = new OpenAIChatClient(
+    model: "gpt-4",
+    apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+);
+
+// Create participating agents
+var developerAgent = chatClient.AsAIAgent(
+    instructions: "You are a developer. Focus on implementation and code.",
+    name: "Developer"
+);
+
+var designerAgent = chatClient.AsAIAgent(
+    instructions: "You are a designer. Focus on UX and visual design.",
+    name: "Designer"
+);
+
+var productAgent = chatClient.AsAIAgent(
+    instructions: "You are a product manager. Focus on requirements and user value.",
+    name: "ProductManager"
+);
+
+// Create a manager that orchestrates the conversation
+var managerClient = new OpenAIChatClient(
+    model: "gpt-4",
+    apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+);
+
+var workflow = AgentWorkflowBuilder
+    .CreateGroupChatBuilderWith(agents =>
+    {
+        return new GroupChatManager(
+            chatClient: managerClient,
+            participants: agents,
+            instructions: @"You are the discussion facilitator. 
+                Coordinate the conversation between Developer, Designer, and ProductManager.
+                Ensure all perspectives are heard before reaching a decision."
+        );
+    })
+    .AddParticipant(developerAgent)
+    .AddParticipant(designerAgent)
+    .AddParticipant(productAgent)
+    .Build();
+
+// Run group chat - manager coordinates multi-agent discussion
+var response = await workflow.RunAsync(
+    "We need to add a new feature: dark mode. Discuss implementation approach."
+);
+Console.WriteLine(response.Text);
+```
+
+---
+
+## Workflow
+
+Represents an executable workflow composed of agents.
+
+```csharp
+using Microsoft.Agents.AI.Workflows;
+```
+
+### Properties
+
+<ParamField path="Name" type="string?">
+  The name of the workflow.
+</ParamField>
+
+### Methods
+
+#### RunAsync()
+
+Runs the workflow with the provided input.
+
+```csharp
+public Task<AgentResponse> RunAsync(
+    string message,
+    AgentSession? session = null,
+    AgentRunOptions? options = null,
+    CancellationToken cancellationToken = default
+)
+
+public Task<AgentResponse> RunAsync(
+    IEnumerable<ChatMessage> messages,
+    AgentSession? session = null,
+    AgentRunOptions? options = null,
+    CancellationToken cancellationToken = default
+)
+```
+
+<ParamField path="message" type="string">
+  The message to send to the workflow.
+</ParamField>
+
+<ParamField path="messages" type="IEnumerable<ChatMessage>">
+  The messages to send to the workflow.
+</ParamField>
+
+<ParamField path="session" type="AgentSession?">
+  Optional session for maintaining state across workflow runs.
+</ParamField>
+
+<ParamField path="options" type="AgentRunOptions?">
+  Optional run options.
+</ParamField>
+
+<ParamField path="cancellationToken" type="CancellationToken" default="default">
+  Cancellation token.
+</ParamField>
+
+<ResponseField name="return" type="Task<AgentResponse>">
+  The workflow's response.
+</ResponseField>
+
+### Example: Stateful Workflow
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Workflows;
+using Microsoft.Extensions.AI;
+
+var chatClient = new OpenAIChatClient(
+    model: "gpt-4",
+    apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+);
+
+var agent1 = chatClient.AsAIAgent(
+    instructions: "You remember and use conversation history.",
+    name: "Agent1"
+);
+
+var agent2 = chatClient.AsAIAgent(
+    instructions: "You build on previous context.",
+    name: "Agent2"
+);
+
+var workflow = AgentWorkflowBuilder.BuildSequential(agent1, agent2);
+
+// Create session for stateful workflow
+var session = new WorkflowSession();
+
+// Multi-turn workflow execution
+await workflow.RunAsync("My name is Alice.", session);
+await workflow.RunAsync("What's my name?", session);
+await workflow.RunAsync("Remember: I like pizza.", session);
+await workflow.RunAsync("What do I like?", session);
+```
+
+---
+
+## Advanced Workflow Patterns
+
+### Example: Custom Aggregation Logic
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Workflows;
+using Microsoft.Extensions.AI;
+
+var chatClient = new OpenAIChatClient(
+    model: "gpt-4",
+    apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+);
+
+// Create sentiment analysis agents
+var positiveAgent = chatClient.AsAIAgent(
+    instructions: "Identify positive aspects only.",
+    name: "PositiveAnalyst"
+);
+
+var negativeAgent = chatClient.AsAIAgent(
+    instructions: "Identify negative aspects only.",
+    name: "NegativeAnalyst"
+);
+
+var neutralAgent = chatClient.AsAIAgent(
+    instructions: "Identify neutral observations only.",
+    name: "NeutralAnalyst"
+);
+
+// Custom aggregator that structures the output
+var workflow = AgentWorkflowBuilder.BuildConcurrent(
+    "sentiment-analysis",
+    new[] { positiveAgent, negativeAgent, neutralAgent },
+    aggregator: (allMessages) =>
+    {
+        var results = allMessages
+            .Select((msgs, index) => new { Index = index, Messages = msgs })
+            .ToDictionary(
+                x => x.Index switch { 0 => "Positive", 1 => "Negative", _ => "Neutral" },
+                x => string.Join(" ", x.Messages.Select(m => m.Text))
+            );
+
+        var formatted = $@"
+Sentiment Analysis Results:
+
+✓ Positive Aspects:
+{results["Positive"]}
+
+✗ Negative Aspects:
+{results["Negative"]}
+
+○ Neutral Observations:
+{results["Neutral"]}
+";
+
+        return new List<ChatMessage>
+        {
+            new ChatMessage(ChatRole.Assistant, formatted)
+        };
+    }
+);
+
+var response = await workflow.RunAsync(
+    "Review this product: The laptop has great battery life but is quite expensive. Build quality is acceptable."
+);
+Console.WriteLine(response.Text);
+```
+
+### Example: Conditional Workflow Logic
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Workflows;
+using Microsoft.Extensions.AI;
+
+public class ConditionalWorkflow
+{
+    private readonly AIAgent _classifierAgent;
+    private readonly AIAgent _technicalAgent;
+    private readonly AIAgent _nonTechnicalAgent;
+
+    public ConditionalWorkflow(
+        AIAgent classifier,
+        AIAgent technical,
+        AIAgent nonTechnical
+    )
+    {
+        _classifierAgent = classifier;
+        _technicalAgent = technical;
+        _nonTechnicalAgent = nonTechnical;
+    }
+
+    public async Task<AgentResponse> RunAsync(
+        string message,
+        CancellationToken cancellationToken = default
+    )
+    {
+        // First, classify the request
+        var classification = await _classifierAgent.RunAsync(
+            $"Classify this request as 'technical' or 'non-technical': {message}",
+            cancellationToken: cancellationToken
+        );
+
+        // Route to appropriate agent based on classification
+        var targetAgent = classification.Text.Contains("technical")
+            ? _technicalAgent
+            : _nonTechnicalAgent;
+
+        return await targetAgent.RunAsync(message, cancellationToken: cancellationToken);
+    }
+}
+
+var chatClient = new OpenAIChatClient(
+    model: "gpt-4",
+    apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+);
+
+var classifier = chatClient.AsAIAgent(
+    instructions: "Classify requests as technical or non-technical.",
+    name: "Classifier"
+);
+
+var technical = chatClient.AsAIAgent(
+    instructions: "You handle technical requests with detailed explanations.",
+    name: "TechnicalAgent"
+);
+
+var nonTechnical = chatClient.AsAIAgent(
+    instructions: "You handle general requests in simple terms.",
+    name: "GeneralAgent"
+);
+
+var workflow = new ConditionalWorkflow(classifier, technical, nonTechnical);
+var response = await workflow.RunAsync("How do I configure OAuth2?");
+```
+
+### Example: Iterative Refinement Workflow
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Workflows;
+using Microsoft.Extensions.AI;
+
+public class RefinementWorkflow
+{
+    private readonly AIAgent _draftAgent;
+    private readonly AIAgent _reviewAgent;
+    private readonly int _maxIterations;
+
+    public RefinementWorkflow(
+        AIAgent drafter,
+        AIAgent reviewer,
+        int maxIterations = 3
+    )
+    {
+        _draftAgent = drafter;
+        _reviewAgent = reviewer;
+        _maxIterations = maxIterations;
+    }
+
+    public async Task<AgentResponse> RunAsync(
+        string prompt,
+        CancellationToken cancellationToken = default
+    )
+    {
+        var currentDraft = await _draftAgent.RunAsync(prompt, cancellationToken: cancellationToken);
+
+        for (int i = 0; i < _maxIterations; i++)
+        {
+            var review = await _reviewAgent.RunAsync(
+                $"Review this draft and suggest improvements: {currentDraft.Text}",
+                cancellationToken: cancellationToken
+            );
+
+            if (review.Text.Contains("approved", StringComparison.OrdinalIgnoreCase))
+            {
+                break;
+            }
+
+            currentDraft = await _draftAgent.RunAsync(
+                $"Improve this draft based on feedback: {currentDraft.Text}\n\nFeedback: {review.Text}",
+                cancellationToken: cancellationToken
+            );
+        }
+
+        return currentDraft;
+    }
+}
+
+var chatClient = new OpenAIChatClient(
+    model: "gpt-4",
+    apiKey: Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+);
+
+var drafter = chatClient.AsAIAgent(
+    instructions: "You draft content. Incorporate feedback to improve.",
+    name: "Drafter"
+);
+
+var reviewer = chatClient.AsAIAgent(
+    instructions: "You review content critically and suggest improvements. Say 'approved' only when content is excellent.",
+    name: "Reviewer"
+);
+
+var workflow = new RefinementWorkflow(drafter, reviewer, maxIterations: 3);
+var response = await workflow.RunAsync("Write a compelling product description for a smart watch.");
+Console.WriteLine(response.Text);
+```
