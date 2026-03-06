@@ -17,32 +17,43 @@ The Agent Framework supports Windows, macOS, and Linux operating systems.
 
 ## Install the Package
 
-Install the core Agent Framework package using pip:
+Install the Agent Framework using pip. We recommend two installation paths:
 
-```bash
+<CodeGroup>
+
+```bash All Packages (Recommended)
+pip install agent-framework --pre
+```
+
+```bash Core Only
 pip install agent-framework-core --pre
 ```
+
+</CodeGroup>
 
 <Warning>
 The `--pre` flag is required during the preview period to install pre-release versions.
 </Warning>
 
+<Tip>
+Installing `agent-framework` gives you all sub-packages and integrations. This is the simplest way to get started. Use `agent-framework-core` for a minimal installation with only Azure OpenAI and OpenAI support.
+</Tip>
+
 ### Optional Packages
 
-Depending on your use case, you may want to install additional packages:
+Install specific provider integrations as needed:
 
 <CodeGroup>
 
-```bash Azure AI Integration
+```bash Azure AI
 pip install agent-framework-azure-ai --pre
 ```
 
-```bash All Packages
-pip install agent-framework-core[all] --pre
+```bash Anthropic
+pip install agent-framework-anthropic --pre
 ```
 
-```bash Specific Providers
-pip install agent-framework-anthropic --pre
+```bash Ollama (Local Models)
 pip install agent-framework-ollama --pre
 ```
 
